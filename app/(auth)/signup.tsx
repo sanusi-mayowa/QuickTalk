@@ -2,49 +2,65 @@ import { useState } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity, TextInput, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import { ArrowLeft, Eye, EyeOff } from 'lucide-react-native';
+import { Feather } from '@expo/vector-icons';
 import { parsePhoneNumberFromString } from 'libphonenumber-js';
 import { auth } from '@/lib/firebase';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function SignupScreen() {
-    const router = useRouter();
-    const [email, setEmail] = useState('');
-    const [phone, setPhone] = useState('');
-    const [password, setPassword] = useState('');
-    const [showPassword, setShowPassword] = useState(false);
-    const [error, setError] = useState('');
+  const router = useRouter();
+  const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [error, setError] = useState('');
 
-    const handleSignup = () => {
-      try {
-        setError('');
+  const handleSignup = async () => {
+    try {
+      // Clear previous errors
+      setError('');
 
-        if (!email || !password || !phone) {
+      // Basic input validation
+      if (!email || !password || !phone) {
         setError('Please fill in all fields');
         return;
-        
-        if (!email.includes('@')) {
-        setError('Please enter a valid email address');
-        return;    
-        }
-
-        const phoneNumber = parsePhoneNumberFromString(phone, 'US');
-        if (!phoneNumber?.isValid()) {
-            setError('Please enter a valid phone number');
-            return;
-
-        }
-        const formattedPhone = phoneNumber.format('E.164');
-        // create user with email and password
-        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-
       }
-    };
 
+      // Email format validation
+      if (!email.includes('@')) {
+        setError('Please enter a valid email address');
+        return;
+      }
 
+      // Phone number validation
+      const phoneNumber = parsePhoneNumberFromString(phone, 'US');
+      if (!phoneNumber?.isValid()) {
+        setError('Please enter a valid phone number');
+        return;
+      }
 
+      const formattedPhone = phoneNumber.format('E.164');
 
-   return (
+      // Create user in Firebase
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+
+      // Save phone number locally for next step (e.g. verification)
+      await AsyncStorage.setItem('phoneNumber', formattedPhone);
+
+      // Navigate to verification screen with phone number param
+      router.push({
+        pathname: '/(auth)/verify',
+        params: { phone: formattedPhone },
+      });
+
+    } catch (error: any) {
+      // Handle Firebase signup errors
+      setError(error.message);
+    }
+  };
+
+  return (
     <LinearGradient
       colors={['#9370DB', '#7B68EE', '#6A5ACD']}
       style={styles.container}
@@ -54,25 +70,30 @@ export default function SignupScreen() {
         style={styles.keyboardAvoidingView}
       >
         <ScrollView contentContainerStyle={styles.scrollView}>
-          <TouchableOpacity 
-            style={styles.backButton} 
+          {/* Back Button */}
+          <TouchableOpacity
+            style={styles.backButton}
             onPress={() => router.back()}
           >
-            <Feather name="chevron-left" size={20} color={"#fff"} />
+            <Feather name="chevron-left" size={20} color="#fff" />
           </TouchableOpacity>
-          
+
+          {/* Header Text */}
           <View style={styles.headerContainer}>
             <Text style={styles.headerTitle}>Create Account</Text>
             <Text style={styles.headerSubtitle}>Enter your details to get started</Text>
           </View>
-          
+
+          {/* Error Message */}
           {error ? (
             <View style={styles.errorContainer}>
               <Text style={styles.errorText}>{error}</Text>
             </View>
           ) : null}
-          
+
+          {/* Signup Form */}
           <View style={styles.formContainer}>
+            {/* Email Input */}
             <View style={styles.inputContainer}>
               <Text style={styles.inputLabel}>Email Address</Text>
               <TextInput
@@ -87,6 +108,7 @@ export default function SignupScreen() {
               />
             </View>
 
+            {/* Password Input */}
             <View style={styles.inputContainer}>
               <Text style={styles.inputLabel}>Password</Text>
               <View style={styles.passwordContainer}>
@@ -103,17 +125,16 @@ export default function SignupScreen() {
                   style={styles.eyeIcon}
                   onPress={() => setShowPassword(!showPassword)}
                 >
-                  {showPassword ? (
-          <Feather name="eye-off" size={20} color={"rgba(255, 255, 255, 0.7)"} />
-
-                  ) : (
-                    <Feather name="eye" size={20} color={"rgba(255, 255, 255, 0.7)"} />
-
-                  )}
+                  <Feather
+                    name={showPassword ? "eye-off" : "eye"}
+                    size={20}
+                    color="rgba(255, 255, 255, 0.7)"
+                  />
                 </TouchableOpacity>
               </View>
             </View>
-            
+
+            {/* Phone Input */}
             <View style={styles.inputContainer}>
               <Text style={styles.inputLabel}>Phone Number</Text>
               <TextInput
@@ -126,7 +147,8 @@ export default function SignupScreen() {
                 autoComplete="tel"
               />
             </View>
-            
+
+            {/* Continue Button */}
             <TouchableOpacity
               style={styles.continueButton}
               onPress={handleSignup}
@@ -134,11 +156,10 @@ export default function SignupScreen() {
             >
               <Text style={styles.continueButtonText}>Continue</Text>
             </TouchableOpacity>
-            
+
+            {/* Redirect to Login */}
             <View style={styles.loginContainer}>
-              <Text style={styles.loginText}>
-                Already have an account?{' '}
-              </Text>
+              <Text style={styles.loginText}>Already have an account? </Text>
               <TouchableOpacity onPress={() => router.push('/(auth)/login')}>
                 <Text style={styles.loginLink}>Sign In</Text>
               </TouchableOpacity>
