@@ -5,6 +5,7 @@ import * as Contacts from 'expo-contacts';
 import { StatusBar } from 'expo-status-bar';
 import { Stack } from "expo-router";
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
+import Toast from 'react-native-toast-message';
 
 export default function RootLayout() {
     const router = useRouter();
@@ -71,6 +72,7 @@ export default function RootLayout() {
         <Stack.Screen name="+not-found" />
       </Stack>
             <StatusBar style="light" />
+            <Toast />
         </>
     );
 }

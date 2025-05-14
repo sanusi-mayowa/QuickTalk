@@ -11,11 +11,11 @@ export default function WelcomeScreen() {
   };
 
   const openTerms = () => {
-    Linking.openURL('https://yourdomain.com/terms'); // Replace with actual link
+    Linking.openURL('https://yourdomain.com/terms');
   };
 
   const openPrivacy = () => {
-    Linking.openURL('https://yourdomain.com/privacy'); // Replace with actual link
+    Linking.openURL('https://yourdomain.com/privacy');
   };
 
   return (

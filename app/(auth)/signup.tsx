@@ -1,140 +1,124 @@
-import { useState } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, TextInput, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, Platform, KeyboardAvoidingView, ActivityIndicator, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
+import { db } from '@/lib/firebase';
+import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
-import { parsePhoneNumberFromString } from 'libphonenumber-js';
-import { auth } from '@/lib/firebase';
-import { createUserWithEmailAndPassword } from 'firebase/auth';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import Toast from 'react-native-toast-message';
 
 export default function SignupScreen() {
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  const [error, setError] = useState('');
 
   const handleSignup = async () => {
+    if (!email || !phone || !password) {
+      Toast.show({
+        type: 'error',
+        text1: 'Missing fields',
+        text2: 'Please fill all fields to continue',
+      });
+      return;
+    }
+
+    // setLoading(true);
+
     try {
-      // Clear previous errors
-      setError('');
-
-      // Basic input validation
-      if (!email || !password || !phone) {
-        setError('Please fill in all fields');
+      const userDoc = await getDoc(doc(db, 'users', email));
+      if (userDoc.exists()) {
+        Toast.show({
+          type: 'error',
+          text1: 'Account exists',
+          text2: 'User with this email already exists',
+        });
+        setLoading(false);
         return;
       }
 
-      // Email format validation
-      if (!email.includes('@')) {
-        setError('Please enter a valid email address');
-        return;
-      }
-
-      // Phone number validation
-      const phoneNumber = parsePhoneNumberFromString(phone, 'US');
-      if (!phoneNumber?.isValid()) {
-        setError('Please enter a valid phone number');
-        return;
-      }
-
-      const formattedPhone = phoneNumber.format('E.164');
-
-      // Create user in Firebase
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-
-      // Save phone number locally for next step (e.g. verification)
-      await AsyncStorage.setItem('phoneNumber', formattedPhone);
-
-      // Navigate to verification screen with phone number param
-      router.push({
-        pathname: '/(auth)/verify',
-        params: { phone: formattedPhone },
+      await setDoc(doc(db, 'users', email), {
+        email,
+        phone,
+        password,
+        emailVerified: false,
       });
 
+      const response = await fetch('https://us-central1-YOUR_PROJECT.cloudfunctions.net/sendOtp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+
+      if (!response.ok) throw new Error('Failed to send OTP');
+
+      Toast.show({
+        type: 'success',
+        text1: 'OTP Sent',
+        text2: 'Check your email for the verification code',
+      });
+
+      router.push({ pathname: '/verify', params: { email } });
+
     } catch (error: any) {
-      // Handle Firebase signup errors
-      setError(error.message);
+      Toast.show({
+        type: 'error',
+        text1: 'Signup failed',
+        text2: error.message || 'Something went wrong',
+      });
+    } finally {
+      setLoading(false);
     }
   };
 
   return (
-    <LinearGradient
-      colors={['#9370DB', '#7B68EE', '#6A5ACD']}
-      style={styles.container}
-    >
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.keyboardAvoidingView}
-      >
+    <LinearGradient colors={['#9370DB', '#7B68EE', '#6A5ACD']} style={styles.container}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.keyboardAvoidingView}>
         <ScrollView contentContainerStyle={styles.scrollView}>
-          {/* Back Button */}
-          <TouchableOpacity
-            style={styles.backButton}
-            onPress={() => router.back()}
-          >
-            <Feather name="chevron-left" size={20} color="#fff" />
+          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+            <Feather name="chevron-left" size={20} color={"#fff"} />
           </TouchableOpacity>
 
-          {/* Header Text */}
           <View style={styles.headerContainer}>
             <Text style={styles.headerTitle}>Create Account</Text>
             <Text style={styles.headerSubtitle}>Enter your details to get started</Text>
           </View>
 
-          {/* Error Message */}
-          {error ? (
-            <View style={styles.errorContainer}>
-              <Text style={styles.errorText}>{error}</Text>
-            </View>
-          ) : null}
-
-          {/* Signup Form */}
           <View style={styles.formContainer}>
-            {/* Email Input */}
             <View style={styles.inputContainer}>
               <Text style={styles.inputLabel}>Email Address</Text>
               <TextInput
                 style={styles.input}
-                placeholder="example@email.com"
+                placeholder="johndoe@email.com"
                 placeholderTextColor="rgba(255, 255, 255, 0.5)"
                 value={email}
                 onChangeText={setEmail}
                 keyboardType="email-address"
                 autoCapitalize="none"
-                autoComplete="email"
               />
             </View>
 
-            {/* Password Input */}
             <View style={styles.inputContainer}>
               <Text style={styles.inputLabel}>Password</Text>
               <View style={styles.passwordContainer}>
                 <TextInput
                   style={styles.passwordInput}
-                  placeholder="Choose a password"
+                  placeholder="*********"
                   placeholderTextColor="rgba(255, 255, 255, 0.5)"
                   value={password}
                   onChangeText={setPassword}
                   secureTextEntry={!showPassword}
                   autoCapitalize="none"
                 />
-                <TouchableOpacity
-                  style={styles.eyeIcon}
-                  onPress={() => setShowPassword(!showPassword)}
-                >
-                  <Feather
-                    name={showPassword ? "eye-off" : "eye"}
-                    size={20}
-                    color="rgba(255, 255, 255, 0.7)"
-                  />
-                </TouchableOpacity>
+                <TouchableOpacity style={styles.eyeIcon} onPress={() => setShowPassword(!showPassword)}>
+  <Feather name={showPassword ? "eye-off" : "eye"} size={20} color="rgba(255, 255, 255, 0.7)" />
+</TouchableOpacity>
+
               </View>
             </View>
 
-            {/* Phone Input */}
             <View style={styles.inputContainer}>
               <Text style={styles.inputLabel}>Phone Number</Text>
               <TextInput
@@ -148,7 +132,6 @@ export default function SignupScreen() {
               />
             </View>
 
-            {/* Continue Button */}
             <TouchableOpacity
               style={styles.continueButton}
               onPress={handleSignup}
@@ -157,13 +140,12 @@ export default function SignupScreen() {
               <Text style={styles.continueButtonText}>Continue</Text>
             </TouchableOpacity>
 
-            {/* Redirect to Login */}
             <View style={styles.loginContainer}>
               <Text style={styles.loginText}>Already have an account? </Text>
               <TouchableOpacity onPress={() => router.push('/(auth)/login')}>
                 <Text style={styles.loginLink}>Sign In</Text>
               </TouchableOpacity>
-            </View>
+              </View>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -205,28 +187,20 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: 'rgba(255, 255, 255, 0.8)',
   },
-  errorContainer: {
-    backgroundColor: 'rgba(255, 87, 87, 0.1)',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 24,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 87, 87, 0.2)',
-  },
-  errorText: {
-    color: '#FF5757',
-    fontSize: 14,
-  },
   formContainer: {
     flex: 1,
   },
   inputContainer: {
     marginBottom: 20,
+    outline: 'none',
+    border: 'none'
   },
   inputLabel: {
     fontSize: 14,
     color: 'rgba(255, 255, 255, 0.9)',
     marginBottom: 8,
+    fontWeight: '700',
+    letterSpacing: 1.5,
   },
   input: {
     backgroundColor: 'rgba(255, 255, 255, 0.15)',
