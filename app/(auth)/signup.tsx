@@ -46,7 +46,7 @@ export default function SignupScreen() {
         emailVerified: false,
       });
 
-      const response = await fetch('https://us-central1-YOUR_PROJECT.cloudfunctions.net/sendOtp', {
+      const response = await fetch('https://quick-talk-backend.vercel.app/api/send-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email }),
@@ -59,7 +59,10 @@ export default function SignupScreen() {
         text1: 'OTP Sent',
         text2: 'Check your email for the verification code',
       });
-
+      // ✅ Reset the form fields
+    // setEmail('');
+    // setPhone('');
+    // setPassword('');
       router.push({ pathname: '/verify', params: { email } });
 
     } catch (error: any) {
@@ -192,8 +195,6 @@ const styles = StyleSheet.create({
   },
   inputContainer: {
     marginBottom: 20,
-    outline: 'none',
-    border: 'none'
   },
   inputLabel: {
     fontSize: 14,
