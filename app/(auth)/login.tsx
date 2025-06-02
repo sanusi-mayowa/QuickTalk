@@ -8,14 +8,16 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  Image,
+  ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
-import { auth } from '@/lib/firebase';
-import { signInWithEmailAndPassword } from 'firebase/auth';
-import { collection, query, where, getDocs } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+// import { auth } from '@/lib/firebase';
+// import { signInWithEmailAndPassword } from 'firebase/auth';
+// import { collection, query, where, getDocs } from 'firebase/firestore';
+// import { db } from '@/lib/firebase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Toast from 'react-native-toast-message';
 
@@ -24,6 +26,10 @@ export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
+  // const isEmailValid = /^[a-zA-Z0-9._%+-]+@gmail\.com$/.test(email.trim());
+  const isEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+
 
   const handleLogin = async () => {
     try {
@@ -35,90 +41,106 @@ export default function LoginScreen() {
         });
         return;
       }
-
-      // Check if user exists and phone is verified
+  
+      setLoading(true);
+  
+      // Sign in with Firebase Auth (checks email and password)
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const user = userCredential.user;
+  
+      // Now fetch user details from Firestore using the UID
       const usersRef = collection(db, 'users');
-      const q = query(usersRef, where('email', '==', email));
+      const q = query(usersRef, where('email', '==', user.email));
       const querySnapshot = await getDocs(q);
-
+  
       if (querySnapshot.empty) {
         Toast.show({
           type: 'error',
           text1: 'User Not Found',
-          text2: 'No user exists with this email',
+          text2: 'No user record found in Firestore',
         });
         return;
       }
-
+  
       const userData = querySnapshot.docs[0].data();
+  
       if (!userData.phoneVerified) {
+        setLoading(false);
         router.push({
           pathname: '/(auth)/register',
-          params: { phone: userData.phone, email },
+          params: { phone: userData.phone, email: user.email },
         });
         return;
       }
-
-      // Sign in with Firebase Auth
-      await signInWithEmailAndPassword(auth, email, password);
-
+  
+      // Set local auth flags
       await AsyncStorage.setItem('isAuthenticated', 'true');
       await AsyncStorage.setItem('hasCompletedOnboarding', 'true');
-
+  
       Toast.show({
         type: 'success',
         text1: 'Login Successful',
         text2: 'Welcome back!',
       });
-
+  
       router.replace('/(tabs)');
     } catch (error: any) {
-      console.error('Login error:', error);
+      console.error('Login error:', error.message);
       Toast.show({
         type: 'error',
         text1: 'Login Failed',
         text2: 'Invalid email or password',
       });
+    } finally {
+      setLoading(false);
     }
   };
+  
 
   return (
-    <LinearGradient colors={['#9370DB', '#7B68EE', '#6A5ACD']} style={styles.container}>
+    <View style={styles.container}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.keyboardAvoidingView}
       >
         <ScrollView contentContainerStyle={styles.scrollView}>
-          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-          <Feather name="chevron-left" size={20} color={"#fff"} />
-          </TouchableOpacity>
+          <View style={styles.logoContainer}>
+            <Image source={require('../../assets/images/logo.png')} style={styles.logo} />
+          </View>
 
           <View style={styles.headerContainer}>
-            <Text style={styles.headerTitle}>Welcome back</Text>
+            <Text style={styles.headerTitle}>Welcome back 👋 </Text>
             <Text style={styles.headerSubtitle}>Sign in to continue</Text>
           </View>
 
           <View style={styles.formContainer}>
             <View style={styles.inputContainer}>
-              <Text style={styles.inputLabel}>Email</Text>
+              <Text style={styles.label}>Email</Text>
               <TextInput
-                style={styles.input}
-                placeholder="example@email.com"
-                placeholderTextColor="rgba(255, 255, 255, 0.5)"
+                style={styles.textInput}
+                placeholder="johndoe@email.com"
+                placeholderTextColor="gray"
                 value={email}
                 onChangeText={setEmail}
                 keyboardType="email-address"
                 autoCapitalize="none"
               />
+              {email.length > 0 && (
+                <Text style={{ color: isEmailValid ? '#4CAF50' : '#FF5252', marginTop: 4 }}>
+                  {isEmailValid
+                    ? '✓ Valid Gmail address'
+                    : '✗ Enter a valid email'}
+                </Text>
+              )}
             </View>
 
             <View style={styles.inputContainer}>
-              <Text style={styles.inputLabel}>Password</Text>
+              <Text style={styles.label}>Password</Text>
               <View style={styles.passwordContainer}>
                 <TextInput
                   style={styles.passwordInput}
                   placeholder="Enter your password"
-                  placeholderTextColor="rgba(255, 255, 255, 0.5)"
+                  placeholderTextColor="gray"
                   value={password}
                   onChangeText={setPassword}
                   secureTextEntry={!showPassword}
@@ -129,9 +151,9 @@ export default function LoginScreen() {
                   onPress={() => setShowPassword(!showPassword)}
                 >
                   {showPassword ? (
-                    <Feather name="eye-off" size={20} color={"rgba(255, 255, 255, 0.7)"} />
+                    <Feather name="eye-off" size={20} color={"gray)"} />
                   ) : (
-                    <Feather name="eye" size={20} color={"rgba(255, 255, 255, 0.7)"} />
+                    <Feather name="eye" size={20} color={"gray)"} />
 
                   )}
                 </TouchableOpacity>
@@ -142,8 +164,20 @@ export default function LoginScreen() {
               <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.loginButton} onPress={handleLogin} activeOpacity={0.8}>
-              <Text style={styles.loginButtonText}>Sign In</Text>
+            {/* Submit */}
+            <TouchableOpacity style={styles.buttonWrapper} onPress={handleLogin}>
+              <LinearGradient
+                colors={['#F857A6', '#FF5858']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={styles.gradient}
+              >
+                {loading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.buttonText}>Sign In</Text>
+                )}
+              </LinearGradient>
             </TouchableOpacity>
 
             <View style={styles.registerContainer}>
@@ -155,13 +189,14 @@ export default function LoginScreen() {
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
-    </LinearGradient>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#3A805B',
   },
   keyboardAvoidingView: {
     flex: 1,
@@ -170,18 +205,18 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     padding: 24,
   },
-  backButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 16,
+  logoContainer: {
+    alignItems: 'center'
+  },
+  logo: {
+    width: 60,
+    height: 60,
+    marginBottom: 12
   },
   headerContainer: {
-    marginTop: 40,
+    marginTop: 25,
     marginBottom: 32,
+    alignItems: 'center',
   },
   headerTitle: {
     fontSize: 28,
@@ -199,64 +234,78 @@ const styles = StyleSheet.create({
   inputContainer: {
     marginBottom: 20,
   },
-  inputLabel: {
+  label: {
     fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.9)',
+    color: 'rgba(255, 255, 255, 0.7)',
     marginBottom: 8,
-    fontWeight: '700',
-    letterSpacing: 1.5,
+    fontWeight: '600',
   },
-  input: {
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+  textInput: {
+    backgroundColor: 'rgb(232, 240, 254)',
     borderRadius: 12,
     padding: 16,
-    color: 'white',
+    color: '#000',
     fontSize: 16,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.2)',
-    outline: 'none',
-    border: 'none',
+    borderColor: '#3A805B',
+    // outlineStyle: 'none',
   },
   passwordContainer: {
     flexDirection: 'row',
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    backgroundColor: 'rgb(232, 240, 254)',
     borderRadius: 12,
+    alignItems: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.2)',
+    borderColor: '#3A805B',
   },
   passwordInput: {
     flex: 1,
     padding: 16,
-    color: 'white',
+    color: '#000',
     fontSize: 16,
+    // outlineStyle: 'none',
   },
   eyeIcon: {
+    paddingHorizontal: 16,
     justifyContent: 'center',
-    paddingRight: 16,
   },
   forgotPassword: {
     alignSelf: 'flex-end',
     marginBottom: 24,
   },
   forgotPasswordText: {
-    color: 'rgba(255, 255, 255, 0.9)',
+    color: '#fff',
     fontSize: 14,
   },
-  loginButton: {
-    backgroundColor: 'white',
-    paddingVertical: 16,
-    borderRadius: 12,
-    alignItems: 'center',
-    marginBottom: 24,
+  guidelines: {
+    marginTop: 10,
+    marginLeft: 8,
+    display: 'flex',
+    flexDirection: 'row',
+    gap: 4,
   },
-  loginButtonText: {
-    color: '#6A5ACD',
+  buttonWrapper: {
+    width: '100%',
+    borderRadius: 30,
+    overflow: 'hidden',
+    marginTop: 30,
+  },
+  gradient: {
+    paddingVertical: 16,
+    borderRadius: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 4,
+  },
+  buttonText: {
+    color: '#fff',
+    fontWeight: 'bold',
     fontSize: 16,
-    fontWeight: '600',
   },
   registerContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
+    marginTop: 30,
   },
   registerText: {
     color: 'rgba(255, 255, 255, 0.8)',

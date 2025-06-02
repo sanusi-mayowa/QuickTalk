@@ -29,28 +29,28 @@ export default function WelcomeScreen() {
       style={styles.container}
     >
       <View style={styles.logoContainer}>
-      <Image source={require('../../assets/images/logo.png')} style={styles.logo} />
+        <Image source={require('../../assets/images/logo.png')} style={styles.logo} />
       </View>
       <Image source={require('../../assets/images/QuickTalk.png')} style={styles.QuickTalkLogo} />
       <Text style={styles.subtitle}>
         Connect with friends and family quickly and privately
       </Text>
       <View style={styles.buttonContainer}>
-      <TouchableOpacity style={styles.buttonWrapper} onPress={handleGetStarted}>
-        <LinearGradient
-          colors={['#F857A6', '#FF5858']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 0 }}
-          style={styles.gradient}
-        >
-          {loading ? (
+        <TouchableOpacity style={styles.buttonWrapper} onPress={handleGetStarted}>
+          <LinearGradient
+            colors={['#F857A6', '#FF5858']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={styles.gradient}
+          >
+            {loading ? (
               <ActivityIndicator color="#fff" />
             ) : (
               <Text style={styles.buttonText}>Get Started</Text>
             )}
-        </LinearGradient>
-      </TouchableOpacity>
-    </View>
+          </LinearGradient>
+        </TouchableOpacity>
+      </View>
       <Text style={styles.termsText}>
         By continuing, you agree to our{' '}
         <Text style={styles.link} onPress={openTerms}>
@@ -100,7 +100,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.3,
     shadowRadius: 4,
-    elevation: 6, 
+    elevation: 6,
   },
   buttonText: {
     color: '#fff',

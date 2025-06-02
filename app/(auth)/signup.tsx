@@ -2,12 +2,13 @@ import React, { useState } from 'react';
 import {
   View, Text, Image, TextInput, TouchableOpacity,
   ScrollView, Platform, KeyboardAvoidingView,
-  ActivityIndicator, StyleSheet
+  ActivityIndicator, StyleSheet, TouchableWithoutFeedback, Keyboard,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
 import Toast from 'react-native-toast-message';
+// import { Keyboard, TouchableWithoutFeedback } from 'react-native';
 
 export default function SignupScreen() {
   const router = useRouter();
@@ -17,11 +18,15 @@ export default function SignupScreen() {
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
-  
+
   const isMinLength = password.length >= 8;
   const hasNumber = /\d/.test(password);
   const isPasswordValid = isMinLength && hasNumber;
-  const isEmailValid = /^[a-zA-Z0-9._%+-]+@gmail\.com$/.test(email.trim());
+  // const isEmailValid = /^[a-zA-Z0-9._%+-]+@gmail\.com$/.test(email.trim());
+  const isEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+  const isPhoneValid = /^\+?\d{10,15}$/.test(phone.trim());
+
+
 
 
   const handleSignup = async () => {
@@ -41,7 +46,7 @@ export default function SignupScreen() {
       });
       return;
     }
-  
+
     if (!isPasswordValid) {
       Toast.show({
         type: 'error',
@@ -50,11 +55,20 @@ export default function SignupScreen() {
       });
       return;
     }
-  
+    if (!isPhoneValid) {
+      Toast.show({
+        type: 'error',
+        text1: 'Invalid phone number',
+        text2: 'Please enter a valid phone number',
+      });
+      return;
+    }
+
     setLoading(true);
-  
+
     try {
-      const response = await fetch('https://quick-talk-backend.vercel.app/api/send-otp', {
+      // const response = await fetch('https://quick-talk-backend.vercel.app/api/send-otp', {
+      const response = await fetch('http://localhost:5000/api/send-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, phone, password }),
@@ -73,139 +87,155 @@ export default function SignupScreen() {
       }
 
       if (!response.ok) throw new Error('Failed to send OTP');
-  
+
       Toast.show({
         type: 'success',
         text1: 'OTP Sent',
         text2: 'Check your email for the verification code',
       });
-  
+
       router.push({
         pathname: '/verify',
         params: { email, phone, password },
       });
-  
+      setEmail('');
+      setPhone('');
+      setPassword('');
     } catch (error) {
       Toast.show({
         type: 'error',
         text1: 'Signup failed',
-        text2: error.message || 'Something went wrong',
+        text2: 'Something went wrong',
       });
     } finally {
       setLoading(false);
     }
   };
-  
+
 
 
   return (
+    // <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
     <View style={styles.container}>
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={styles.keyboardAvoidingView}
-    >
-      <ScrollView contentContainerStyle={styles.scrollView}>
-        <TouchableOpacity style={styles.backButton} onPress={() => router.push('/getting-started')}>
-          <Feather name="arrow-left" size={20} color="#fff" />
-        </TouchableOpacity>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.keyboardAvoidingView}
+      >
+        <ScrollView contentContainerStyle={styles.scrollView}  keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
+          <TouchableOpacity style={styles.backButton} onPress={() => router.push('/getting-started')}>
+            <Feather name="arrow-left" size={20} color="#fff" />
+          </TouchableOpacity>
 
-        <View style={styles.logoContainer}>
-          <Image source={require('../../assets/images/logo.png')} style={styles.logo} />
-        </View>
+          <View style={styles.logoContainer}>
+            <Image source={require('../../assets/images/logo.png')} style={styles.logo} />
+          </View>
 
-        <View style={styles.headerContainer}>
-          <Text style={styles.headerTitle}>Create Account</Text>
-        </View>
+          <View style={styles.headerContainer}>
+            <Text style={styles.headerTitle}>Create Account</Text>
+          </View>
 
-        <View style={styles.formContainer}>
-          {/* Email */}
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Your email</Text>
-            <TextInput
-              style={styles.textInput}
-              placeholder="johndoe@gmail.com"
-              placeholderTextColor="#000"
-              value={email}
-              onChangeText={setEmail}
-              keyboardType="email-address"
-              autoCapitalize="none"
-            />
-            {email.length > 0 && (
+          <View style={styles.formContainer}>
+            {/* Email */}
+            <View style={styles.inputContainer}>
+              <Text style={styles.label}>Your email</Text>
+              <TextInput
+               blurOnSubmit={true}
+                style={styles.textInput}
+                placeholder="johndoe@gmail.com"
+                placeholderTextColor="gray"
+                value={email}
+                onChangeText={setEmail}
+                keyboardType="email-address"
+                autoCapitalize="none"
+              />
+              {email.length > 0 && (
                 <Text style={{ color: isEmailValid ? '#4CAF50' : '#FF5252', marginTop: 4 }}>
                   {isEmailValid
                     ? '✓ Valid Gmail address'
                     : '✗ Enter a valid email'}
                 </Text>
               )}
-          </View>
+            </View>
 
-          {/* Password */}
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Password</Text>
-            <View style={styles.passwordContainer}>
+            {/* Password */}
+            <View style={styles.inputContainer}>
+              <Text style={styles.label}>Password</Text>
+              <View style={styles.passwordContainer}>
+                <TextInput
+                 blurOnSubmit={true}
+                  style={styles.passwordInput}
+                  placeholder="*********"
+                  placeholderTextColor="gray"
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry={!showPassword}
+                  autoCapitalize="none"
+                  underlineColorAndroid="transparent"
+                />
+                <TouchableOpacity style={styles.eyeIcon} onPress={() => setShowPassword(!showPassword)}>
+                  <Feather name={showPassword ? 'eye-off' : 'eye'} size={20} color="gray" />
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.guidelines}>
+                <Text style={{ color: isMinLength ? '#4CAF50' : '#fff' }}>Minimum 8 characters,</Text>
+                <Text style={{ color: hasNumber ? '#4CAF50' : '#fff' }}>at least one number</Text>
+              </View>
+            </View>
+
+            {/* Phone Number */}
+            <View style={styles.inputContainer}>
+              <Text style={styles.label}>Phone number</Text>
               <TextInput
-                style={styles.passwordInput}
-                placeholder="*********"
-                placeholderTextColor="#000"
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry={!showPassword}
-                autoCapitalize="none"
-                underlineColorAndroid="transparent"
+               blurOnSubmit={true}
+                style={styles.textInput}
+                placeholder="+234 (810) 000-0000"
+                placeholderTextColor="gray"
+                value={phone}
+                onChangeText={setPhone}
+                keyboardType="phone-pad"
+                autoComplete="tel"
               />
-              <TouchableOpacity style={styles.eyeIcon} onPress={() => setShowPassword(!showPassword)}>
-                <Feather name={showPassword ? 'eye-off' : 'eye'} size={20} color="#000" />
-              </TouchableOpacity>
             </View>
 
-            <View style={styles.guidelines}>
-              <Text style={{ color: isMinLength ? '#4CAF50' : '#fff' }}>Minimum 8 characters,</Text>
-              <Text style={{ color: hasNumber ? '#4CAF50' : '#fff' }}>at least one number</Text>
-            </View>
+            {/* Submit */}
+            <TouchableOpacity style={styles.buttonWrapper} onPress={handleSignup}>
+              <LinearGradient
+                colors={['#F857A6', '#FF5858']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={styles.gradient}
+              >
+                {loading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.buttonText}>Sign Up</Text>
+                )}
+              </LinearGradient>
+            </TouchableOpacity>
           </View>
-
-          {/* Phone Number */}
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Phone number</Text>
-            <TextInput
-              style={styles.textInput}
-              placeholder="+234 (810) 000-0000"
-              placeholderTextColor="#000"
-              value={phone}
-              onChangeText={setPhone}
-              keyboardType="phone-pad"
-              autoComplete="tel"
-            />
+          <View style={styles.registerContainer}>
+            <Text style={styles.registerText}>Already have an account? </Text>
+            <TouchableOpacity onPress={() => router.push('/(auth)/login')}>
+              <Text style={styles.registerLink}>Sign in</Text>
+            </TouchableOpacity>
           </View>
-
-          {/* Submit */}
-          <TouchableOpacity style={styles.buttonWrapper} onPress={handleSignup}>
-            <LinearGradient
-              colors={['#F857A6', '#FF5858']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={styles.gradient}
-            >
-              {loading ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={styles.buttonText}>Sign Up</Text>
-              )}
-            </LinearGradient>
-          </TouchableOpacity>
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
-  </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </View>
+    // </TouchableWithoutFeedback>
   );
 }
 const styles = StyleSheet.create({
-  container: { 
-    flex: 1, 
+  container: {
+    flex: 1,
     backgroundColor: '#3A805B',
   },
   keyboardAvoidingView: { flex: 1 },
-  scrollView: { flexGrow: 1, padding: 24 },
+  scrollView: {
+    flexGrow: 1,
+    padding: 24
+  },
   backButton: {
     width: 40,
     height: 40,
@@ -215,8 +245,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 10,
   },
-  logoContainer: { alignItems: 'center' },
-  logo: { width: 60, height: 60, marginBottom: 12 },
+  logoContainer: {
+    alignItems: 'center'
+  },
+  logo:
+  {
+    width: 60,
+    height: 60,
+    marginBottom: 12
+  },
   headerContainer: {
     marginTop: 25,
     marginBottom: 32,
@@ -244,7 +281,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     borderWidth: 1,
     borderColor: '#3A805B',
-    outlineStyle: 'none',
+    // outlineStyle: 'none',
   },
   passwordContainer: {
     flexDirection: 'row',
@@ -259,7 +296,7 @@ const styles = StyleSheet.create({
     padding: 16,
     color: '#000',
     fontSize: 16,
-    outlineStyle: 'none',
+    // outlineStyle: 'none',
   },
   eyeIcon: {
     paddingHorizontal: 16,
@@ -269,7 +306,7 @@ const styles = StyleSheet.create({
     marginTop: 10,
     marginLeft: 8,
     display: 'flex',
-    flexDirection: 'row', 
+    flexDirection: 'row',
     gap: 4,
   },
   buttonWrapper: {
@@ -289,5 +326,19 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: 'bold',
     fontSize: 16,
+  },
+  registerContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    marginTop: 30,
+  },
+  registerText: {
+    color: 'rgba(255, 255, 255, 0.8)',
+    fontSize: 14,
+  },
+  registerLink: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '600',
   },
 });
