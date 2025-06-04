@@ -19,8 +19,6 @@ export default function VerifyScreen() {
   const inputRefs = useRef<Array<TextInput | null>>([]);
   const isEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 
-// console.log('Supabase client:', supabase);
-
   const handleCodeChange = (text: string, index: number) => {
     if (text.length > 1) text = text[0];
     const newCode = [...code];

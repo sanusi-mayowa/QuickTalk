@@ -8,7 +8,6 @@ import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
 import Toast from 'react-native-toast-message';
-// import { Keyboard, TouchableWithoutFeedback } from 'react-native';
 
 export default function SignupScreen() {
   const router = useRouter();
@@ -22,12 +21,8 @@ export default function SignupScreen() {
   const isMinLength = password.length >= 8;
   const hasNumber = /\d/.test(password);
   const isPasswordValid = isMinLength && hasNumber;
-  // const isEmailValid = /^[a-zA-Z0-9._%+-]+@gmail\.com$/.test(email.trim());
   const isEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
   const isPhoneValid = /^\+?\d{10,15}$/.test(phone.trim());
-
-
-
 
   const handleSignup = async () => {
     if (!email || !phone || !password) {
@@ -74,9 +69,10 @@ export default function SignupScreen() {
         body: JSON.stringify({ email, phone, password }),
 
       });
+      const data = await response.json();
       if (response.status === 409) {
         // User already exists
-        const data = await response.json();
+        console.log('User exists error, showing toast');
         Toast.show({
           type: 'error',
           text1: 'User already exists',
@@ -112,10 +108,7 @@ export default function SignupScreen() {
     }
   };
 
-
-
   return (
-    // <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
     <View style={styles.container}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -223,7 +216,6 @@ export default function SignupScreen() {
         </ScrollView>
       </KeyboardAvoidingView>
     </View>
-    // </TouchableWithoutFeedback>
   );
 }
 const styles = StyleSheet.create({
@@ -281,7 +273,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     borderWidth: 1,
     borderColor: '#3A805B',
-    // outlineStyle: 'none',
+    outlineStyle: 'none',
   },
   passwordContainer: {
     flexDirection: 'row',
@@ -296,7 +288,7 @@ const styles = StyleSheet.create({
     padding: 16,
     color: '#000',
     fontSize: 16,
-    // outlineStyle: 'none',
+    outlineStyle: 'none',
   },
   eyeIcon: {
     paddingHorizontal: 16,

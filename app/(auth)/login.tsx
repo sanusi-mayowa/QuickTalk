@@ -14,12 +14,9 @@ import {
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
-// import { auth } from '@/lib/firebase';
-// import { signInWithEmailAndPassword } from 'firebase/auth';
-// import { collection, query, where, getDocs } from 'firebase/firestore';
-// import { db } from '@/lib/firebase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Toast from 'react-native-toast-message';
+import { supabase } from '@/lib/supabase';
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -27,7 +24,6 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  // const isEmailValid = /^[a-zA-Z0-9._%+-]+@gmail\.com$/.test(email.trim());
   const isEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 
 
@@ -44,36 +40,36 @@ export default function LoginScreen() {
   
       setLoading(true);
   
-      // Sign in with Firebase Auth (checks email and password)
-      const userCredential = await signInWithEmailAndPassword(auth, email, password);
-      const user = userCredential.user;
+      // Sign in with Supabase Auth (checks email and password)
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+      console.log('Attempting login with:', { email, password });
+      console.log('SignIn data:', data, 'error:', error);
+      
   
-      // Now fetch user details from Firestore using the UID
-      const usersRef = collection(db, 'users');
-      const q = query(usersRef, where('email', '==', user.email));
-      const querySnapshot = await getDocs(q);
-  
-      if (querySnapshot.empty) {
+      if (error) {
         Toast.show({
           type: 'error',
-          text1: 'User Not Found',
-          text2: 'No user record found in Firestore',
+          text1: 'Login Failed',
+          text2: error.message,
         });
-        return;
-      }
-  
-      const userData = querySnapshot.docs[0].data();
-  
-      if (!userData.phoneVerified) {
         setLoading(false);
-        router.push({
-          pathname: '/(auth)/register',
-          params: { phone: userData.phone, email: user.email },
+        return;
+      }
+
+      if (!data.user) {
+        Toast.show({
+          type: 'error',
+          text1: 'Login Failed',
+          text2: 'User not found',
         });
+        setLoading(false);
         return;
       }
   
-      // Set local auth flags
+      // Save local login state
       await AsyncStorage.setItem('isAuthenticated', 'true');
       await AsyncStorage.setItem('hasCompletedOnboarding', 'true');
   
@@ -84,18 +80,17 @@ export default function LoginScreen() {
       });
   
       router.replace('/(tabs)');
-    } catch (error: any) {
-      console.error('Login error:', error.message);
+    } catch (error) {
+      console.error('Login error:', error);
       Toast.show({
         type: 'error',
-        text1: 'Login Failed',
-        text2: 'Invalid email or password',
+        text1: 'Unexpected Error',
+        text2: 'Something went wrong. Please try again.',
       });
     } finally {
       setLoading(false);
     }
   };
-  
 
   return (
     <View style={styles.container}>

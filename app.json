@@ -20,8 +20,8 @@
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true,
-      "package": "com.faruq_sanusiorg.QuickTalk"
+      "package": "com.quicktalk.app",
+      "versionCode": 1
     },
     "web": {
       "bundler": "metro",
@@ -46,7 +46,7 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "1cb90979-414d-4bbe-bddb-7a8581184796"
+        "projectId": "7febe68a-aae3-4531-ad14-8c83921d770a"
       }
     },
     "owner": "faruq_sanusi"
