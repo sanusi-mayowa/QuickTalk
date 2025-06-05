@@ -68,7 +68,9 @@ export default function LoginScreen() {
         setLoading(false);
         return;
       }
-  
+      // store user ID
+      const userID = data.user.id;
+      await AsyncStorage.setItem('userID', userID);
       // Save local login state
       await AsyncStorage.setItem('isAuthenticated', 'true');
       await AsyncStorage.setItem('hasCompletedOnboarding', 'true');
@@ -243,7 +245,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     borderWidth: 1,
     borderColor: '#3A805B',
-    // outlineStyle: 'none',
+    outlineStyle: 'none',
   },
   passwordContainer: {
     flexDirection: 'row',
@@ -258,7 +260,7 @@ const styles = StyleSheet.create({
     padding: 16,
     color: '#000',
     fontSize: 16,
-    // outlineStyle: 'none',
+    outlineStyle: 'none',
   },
   eyeIcon: {
     paddingHorizontal: 16,
