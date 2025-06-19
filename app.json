@@ -38,6 +38,29 @@
           "resizeMode": "contain",
           "backgroundColor": "#ffffff"
         }
+      ],
+      "expo-font",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/icon.png",
+          "color": "#25D366"
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow $(PRODUCT_NAME) to access your camera to take photos and videos for sharing.",
+          "microphonePermission": "Allow $(PRODUCT_NAME) to access your microphone to record audio for videos.",
+          "recordAudioAndroid": true
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "The app accesses your photos to let you share them with your contacts.",
+          "cameraPermission": "The app accesses your camera to let you take photos to share with your contacts."
+        }
       ]
     ],
     "experiments": {
