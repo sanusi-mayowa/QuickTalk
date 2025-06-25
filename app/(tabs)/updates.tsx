@@ -264,7 +264,7 @@ export default function UpdatesScreen() {
             <Feather name="camera" size={24} color="#fff" />
           </TouchableOpacity>
           <TouchableOpacity style={styles.headerButton}>
-            <Feather name="more-horinzontal" size={24} color="#fff" />
+            <Feather name="more-vertical" size={24} color="#fff" />
           </TouchableOpacity>
         </View>
       </View>

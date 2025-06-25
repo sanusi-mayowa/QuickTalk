@@ -1,6 +1,5 @@
 import { Tabs } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
-// import { MessageCircle, Users, Settings, Phone, Camera } from 'lucide-react-native';
 
 export default function TabLayout() {
   return (

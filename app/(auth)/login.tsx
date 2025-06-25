@@ -26,73 +26,75 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const isEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 
-
-  const handleLogin = async () => {
-    try {
-      if (!email || !password) {
-        Toast.show({
-          type: 'error',
-          text1: 'Validation Error',
-          text2: 'Please fill in all fields',
-        });
-        return;
-      }
-  
-      setLoading(true);
-  
-      // Sign in with Supabase Auth (checks email and password)
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-      console.log('Attempting login with:', { email, password });
-      console.log('SignIn data:', data, 'error:', error);
-      
-  
-      if (error) {
-        Toast.show({
-          type: 'error',
-          text1: 'Login Failed',
-          text2: error.message,
-        });
-        setLoading(false);
-        return;
-      }
-
-      if (!data.user) {
-        Toast.show({
-          type: 'error',
-          text1: 'Login Failed',
-          text2: 'User not found',
-        });
-        setLoading(false);
-        return;
-      }
-      // store user ID
-      const userID = data.user.id;
-      await AsyncStorage.setItem('userID', userID);
-      // Save local login state
-      await AsyncStorage.setItem('isAuthenticated', 'true');
-      await AsyncStorage.setItem('hasCompletedOnboarding', 'true');
-  
-      Toast.show({
-        type: 'success',
-        text1: 'Login Successful',
-        text2: 'Welcome back!',
-      });
-  
-      router.replace('/(tabs)');
-    } catch (error) {
-      console.error('Login error:', error);
+const handleLogin = async () => {
+  try {
+    if (!email || !password) {
       Toast.show({
         type: 'error',
-        text1: 'Unexpected Error',
-        text2: 'Something went wrong. Please try again.',
+        text1: 'Validation Error',
+        text2: 'Please fill in all fields',
       });
-    } finally {
-      setLoading(false);
+      return;
     }
-  };
+
+    setLoading(true);
+
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (error || !data.user) {
+      Toast.show({
+        type: 'error',
+        text1: 'Login Failed',
+        text2: error?.message || 'User not found',
+      });
+      setLoading(false);
+      return;
+    }
+
+    const userID = data.user.id;
+    await AsyncStorage.setItem('userID', userID);
+    await AsyncStorage.setItem('isAuthenticated', 'true');
+    await AsyncStorage.setItem('hasCompletedOnboarding', 'true');
+
+    // ✅ Check if user has profile
+    const { data: profile, error: profileError } = await supabase
+      .from('user_profiles')
+      .select('id')
+      .eq('auth_user_id', userID)
+      .maybeSingle(); // Returns null if no row found
+
+    if (profileError) {
+      throw profileError;
+    }
+
+    Toast.show({
+      type: 'success',
+      text1: 'Login Successful',
+      text2: 'Welcome back!',
+    });
+
+    // ✅ Redirect based on whether profile exists
+    if (profile) {
+      router.replace('/(tabs)');
+    } else {
+      router.replace('/create-profile');
+    }
+
+  } catch (error) {
+    console.error('Login error:', error);
+    Toast.show({
+      type: 'error',
+      text1: 'Unexpected Error',
+      text2: 'Something went wrong. Please try again.',
+    });
+  } finally {
+    setLoading(false);
+  }
+};
+
 
   return (
     <View style={styles.container}>
@@ -245,7 +247,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     borderWidth: 1,
     borderColor: '#3A805B',
-    outlineStyle: 'none',
+    // outlineStyle: 'none',
   },
   passwordContainer: {
     flexDirection: 'row',
@@ -260,7 +262,7 @@ const styles = StyleSheet.create({
     padding: 16,
     color: '#000',
     fontSize: 16,
-    outlineStyle: 'none',
+    // outlineStyle: 'none',
   },
   eyeIcon: {
     paddingHorizontal: 16,

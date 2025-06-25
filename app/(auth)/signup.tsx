@@ -1,22 +1,28 @@
-import React, { useState } from 'react';
+import React, { useState } from "react";
 import {
-  View, Text, Image, TextInput, TouchableOpacity,
-  ScrollView, Platform, KeyboardAvoidingView,
-  ActivityIndicator, StyleSheet, TouchableWithoutFeedback, Keyboard,
-} from 'react-native';
-import { useRouter } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
-import { Feather } from '@expo/vector-icons';
-import Toast from 'react-native-toast-message';
+  View,
+  Text,
+  Image,
+  TextInput,
+  TouchableOpacity,
+  ScrollView,
+  Platform,
+  KeyboardAvoidingView,
+  ActivityIndicator,
+  StyleSheet,
+} from "react-native";
+import { useRouter } from "expo-router";
+import { LinearGradient } from "expo-linear-gradient";
+import { Feather } from "@expo/vector-icons";
+import Toast from "react-native-toast-message";
 
 export default function SignupScreen() {
   const router = useRouter();
-  const [email, setEmail] = useState('');
-  const [phone, setPhone] = useState('');
-  const [password, setPassword] = useState('');
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-
 
   const isMinLength = password.length >= 8;
   const hasNumber = /\d/.test(password);
@@ -27,34 +33,34 @@ export default function SignupScreen() {
   const handleSignup = async () => {
     if (!email || !phone || !password) {
       Toast.show({
-        type: 'error',
-        text1: 'Missing fields',
-        text2: 'Please fill all fields to continue',
+        type: "error",
+        text1: "Missing fields",
+        text2: "Please fill all fields to continue",
       });
       return;
     }
     if (!isEmailValid) {
       Toast.show({
-        type: 'error',
-        text1: 'Invalid email',
-        text2: 'Please enter a valid Gmail address',
+        type: "error",
+        text1: "Invalid email",
+        text2: "Please enter a valid email address",
       });
       return;
     }
 
     if (!isPasswordValid) {
       Toast.show({
-        type: 'error',
-        text1: 'Invalid password',
-        text2: 'Password must be at least 8 characters and include a number',
+        type: "error",
+        text1: "Invalid password",
+        text2: "Password must be at least 8 characters and include a number",
       });
       return;
     }
     if (!isPhoneValid) {
       Toast.show({
-        type: 'error',
-        text1: 'Invalid phone number',
-        text2: 'Please enter a valid phone number',
+        type: "error",
+        text1: "Invalid phone number",
+        text2: "Please enter a valid phone number (10-15 digits)",
       });
       return;
     }
@@ -62,46 +68,50 @@ export default function SignupScreen() {
     setLoading(true);
 
     try {
-      // const response = await fetch('https://quick-talk-backend.vercel.app/api/send-otp', {
-      const response = await fetch('http://localhost:5000/api/send-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      // const response = await fetch("https://quick-talk-backend.vercel.app/api/send-otp", {
+      const response = await fetch("http://localhost:5000/api/send-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, phone, password }),
-
       });
+
       const data = await response.json();
+
       if (response.status === 409) {
-        // User already exists
-        console.log('User exists error, showing toast');
         Toast.show({
-          type: 'error',
-          text1: 'User already exists',
-          text2: data.error || 'A user with this email or phone number already exists',
+          type: "error",
+          text1: "Registration Failed",
+          text2: data.error || "User already exists",
         });
         setLoading(false);
         return;
       }
 
-      if (!response.ok) throw new Error('Failed to send OTP');
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to send OTP");
+      }
 
       Toast.show({
-        type: 'success',
-        text1: 'OTP Sent',
-        text2: 'Check your email for the verification code',
+        type: "success",
+        text1: "Verification Code Sent!",
+        text2: "Check your email for the 6-digit verification code",
       });
 
       router.push({
-        pathname: '/verify',
+        pathname: "/(auth)/verify",
         params: { email, phone, password },
       });
-      setEmail('');
-      setPhone('');
-      setPassword('');
-    } catch (error) {
+
+      // Clear form
+      setEmail("");
+      setPhone("");
+      setPassword("");
+    } catch (error: any) {
+      console.error("Signup error:", error);
       Toast.show({
-        type: 'error',
-        text1: 'Signup failed',
-        text2: 'Something went wrong',
+        type: "error",
+        text1: "Registration Failed",
+        text2: error.message || "Something went wrong. Please try again.",
       });
     } finally {
       setLoading(false);
@@ -111,28 +121,40 @@ export default function SignupScreen() {
   return (
     <View style={styles.container}>
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={styles.keyboardAvoidingView}
       >
-        <ScrollView contentContainerStyle={styles.scrollView}  keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
-          <TouchableOpacity style={styles.backButton} onPress={() => router.push('/getting-started')}>
+        <ScrollView
+          contentContainerStyle={styles.scrollView}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+        >
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={() => router.push("/getting-started")}
+          >
             <Feather name="arrow-left" size={20} color="#fff" />
           </TouchableOpacity>
 
           <View style={styles.logoContainer}>
-            <Image source={require('../../assets/images/logo.png')} style={styles.logo} />
+            <Image
+              source={require("../../assets/images/logo.png")}
+              style={styles.logo}
+            />
           </View>
 
           <View style={styles.headerContainer}>
             <Text style={styles.headerTitle}>Create Account</Text>
+            <Text style={styles.headerSubtitle}>
+              Join QuickTalk and start connecting
+            </Text>
           </View>
 
           <View style={styles.formContainer}>
-            {/* Email */}
             <View style={styles.inputContainer}>
-              <Text style={styles.label}>Your email</Text>
+              <Text style={styles.label}>Email Address</Text>
               <TextInput
-               blurOnSubmit={true}
+                blurOnSubmit={true}
                 style={styles.textInput}
                 placeholder="johndoe@gmail.com"
                 placeholderTextColor="gray"
@@ -142,75 +164,119 @@ export default function SignupScreen() {
                 autoCapitalize="none"
               />
               {email.length > 0 && (
-                <Text style={{ color: isEmailValid ? '#4CAF50' : '#FF5252', marginTop: 4 }}>
+                <Text
+                  style={{
+                    color: isEmailValid ? "#4CAF50" : "#FF5252",
+                    marginTop: 4,
+                  }}
+                >
                   {isEmailValid
-                    ? '✓ Valid Gmail address'
-                    : '✗ Enter a valid email'}
+                    ? "✓ Valid email address"
+                    : "✗ Enter a valid email"}
                 </Text>
               )}
             </View>
 
-            {/* Password */}
             <View style={styles.inputContainer}>
-              <Text style={styles.label}>Password</Text>
-              <View style={styles.passwordContainer}>
-                <TextInput
-                 blurOnSubmit={true}
-                  style={styles.passwordInput}
-                  placeholder="*********"
-                  placeholderTextColor="gray"
-                  value={password}
-                  onChangeText={setPassword}
-                  secureTextEntry={!showPassword}
-                  autoCapitalize="none"
-                  underlineColorAndroid="transparent"
-                />
-                <TouchableOpacity style={styles.eyeIcon} onPress={() => setShowPassword(!showPassword)}>
-                  <Feather name={showPassword ? 'eye-off' : 'eye'} size={20} color="gray" />
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.guidelines}>
-                <Text style={{ color: isMinLength ? '#4CAF50' : '#fff' }}>Minimum 8 characters,</Text>
-                <Text style={{ color: hasNumber ? '#4CAF50' : '#fff' }}>at least one number</Text>
-              </View>
-            </View>
-
-            {/* Phone Number */}
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>Phone number</Text>
+              <Text style={styles.label}>Phone Number</Text>
               <TextInput
-               blurOnSubmit={true}
+                blurOnSubmit={true}
                 style={styles.textInput}
-                placeholder="+234 (810) 000-0000"
+                placeholder="+1 (555) 123-4567"
                 placeholderTextColor="gray"
                 value={phone}
                 onChangeText={setPhone}
                 keyboardType="phone-pad"
                 autoComplete="tel"
               />
+              {phone.length > 0 && (
+                <Text
+                  style={{
+                    color: isPhoneValid ? "#4CAF50" : "#FF5252",
+                    marginTop: 4,
+                  }}
+                >
+                  {isPhoneValid
+                    ? "✓ Valid phone number"
+                    : "✗ Enter 10-15 digits"}
+                </Text>
+              )}
             </View>
 
-            {/* Submit */}
-            <TouchableOpacity style={styles.buttonWrapper} onPress={handleSignup}>
+            <View style={styles.inputContainer}>
+              <Text style={styles.label}>Password</Text>
+              <View style={styles.passwordContainer}>
+                <TextInput
+                  blurOnSubmit={true}
+                  style={styles.passwordInput}
+                  placeholder="Create a strong password"
+                  placeholderTextColor="gray"
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry={!showPassword}
+                  autoCapitalize="none"
+                />
+                <TouchableOpacity
+                  style={styles.eyeIcon}
+                  onPress={() => setShowPassword(!showPassword)}
+                >
+                  <Feather
+                    name={showPassword ? "eye-off" : "eye"}
+                    size={20}
+                    color="gray"
+                  />
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.guidelines}>
+                <Text
+                  style={{
+                    color: isMinLength ? "#4CAF50" : "rgba(255, 255, 255, 0.7)",
+                    fontSize: 12,
+                  }}
+                >
+                  ✓ Minimum 8 characters
+                </Text>
+                <Text
+                  style={{
+                    color: hasNumber ? "#4CAF50" : "rgba(255, 255, 255, 0.7)",
+                    fontSize: 12,
+                  }}
+                >
+                  ✓ At least one number
+                </Text>
+              </View>
+            </View>
+
+            <TouchableOpacity
+              style={[styles.buttonWrapper, loading && styles.buttonDisabled]}
+              onPress={handleSignup}
+              disabled={loading}
+            >
               <LinearGradient
-                colors={['#F857A6', '#FF5858']}
+                colors={["#F857A6", "#FF5858"]}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 0 }}
                 style={styles.gradient}
               >
                 {loading ? (
-                  <ActivityIndicator color="#fff" />
+                  <View style={styles.loadingContainer}>
+                    <ActivityIndicator color="#fff" size="small" />
+                    <Text style={[styles.buttonText, { marginLeft: 8 }]}>
+                      Creating Account...
+                    </Text>
+                  </View>
                 ) : (
-                  <Text style={styles.buttonText}>Sign Up</Text>
+                  <Text style={styles.buttonText}>Create Account</Text>
                 )}
               </LinearGradient>
             </TouchableOpacity>
           </View>
+
           <View style={styles.registerContainer}>
             <Text style={styles.registerText}>Already have an account? </Text>
-            <TouchableOpacity onPress={() => router.push('/(auth)/login')}>
-              <Text style={styles.registerLink}>Sign in</Text>
+            <TouchableOpacity onPress={() => router.push("/(auth)/login")}>
+              <Text style={styles.registerLink}>Sign In</Text>
             </TouchableOpacity>
           </View>
         </ScrollView>
@@ -218,119 +284,135 @@ export default function SignupScreen() {
     </View>
   );
 }
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#3A805B',
+    backgroundColor: "#3A805B",
   },
-  keyboardAvoidingView: { flex: 1 },
+  keyboardAvoidingView: {
+    flex: 1,
+  },
   scrollView: {
     flexGrow: 1,
-    padding: 24
+    padding: 24,
   },
   backButton: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    justifyContent: 'center',
-    alignItems: 'center',
+    backgroundColor: "rgba(255, 255, 255, 0.2)",
+    justifyContent: "center",
+    alignItems: "center",
     marginTop: 10,
   },
   logoContainer: {
-    alignItems: 'center'
+    alignItems: "center",
+    marginTop: 20,
   },
-  logo:
-  {
+  logo: {
     width: 60,
     height: 60,
-    marginBottom: 12
+    marginBottom: 12,
   },
   headerContainer: {
     marginTop: 25,
     marginBottom: 32,
-    alignItems: 'center',
+    alignItems: "center",
   },
   headerTitle: {
     fontSize: 28,
-    fontWeight: '700',
-    color: 'white',
+    fontWeight: "700",
+    color: "white",
     marginBottom: 8,
   },
-  formContainer: { flex: 1 },
-  inputContainer: { marginBottom: 20 },
+  headerSubtitle: {
+    fontSize: 16,
+    color: "rgba(255, 255, 255, 0.8)",
+    textAlign: "center",
+  },
+  formContainer: {
+    flex: 1,
+  },
+  inputContainer: {
+    marginBottom: 20,
+  },
   label: {
     fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.7)',
+    color: "rgba(255, 255, 255, 0.7)",
     marginBottom: 8,
-    fontWeight: '600',
+    fontWeight: "600",
   },
   textInput: {
-    backgroundColor: 'rgb(232, 240, 254)',
+    backgroundColor: "rgb(232, 240, 254)",
     borderRadius: 12,
     padding: 16,
-    color: '#000',
+    color: "#000",
     fontSize: 16,
     borderWidth: 1,
-    borderColor: '#3A805B',
-    outlineStyle: 'none',
+    borderColor: "#3A805B",
   },
   passwordContainer: {
-    flexDirection: 'row',
-    backgroundColor: 'rgb(232, 240, 254)',
+    flexDirection: "row",
+    backgroundColor: "rgb(232, 240, 254)",
     borderRadius: 12,
-    alignItems: 'center',
+    alignItems: "center",
     borderWidth: 1,
-    borderColor: '#3A805B',
+    borderColor: "#3A805B",
   },
   passwordInput: {
     flex: 1,
     padding: 16,
-    color: '#000',
+    color: "#000",
     fontSize: 16,
-    outlineStyle: 'none',
   },
   eyeIcon: {
     paddingHorizontal: 16,
-    justifyContent: 'center',
+    justifyContent: "center",
   },
   guidelines: {
-    marginTop: 10,
-    marginLeft: 8,
-    display: 'flex',
-    flexDirection: 'row',
-    gap: 4,
+    marginTop: 8,
+    marginLeft: 4,
+    display: "flex",
+    flexDirection: "row",
   },
   buttonWrapper: {
-    width: '100%',
+    width: "100%",
     borderRadius: 30,
-    overflow: 'hidden',
+    overflow: "hidden",
     marginTop: 30,
+  },
+  buttonDisabled: {
+    opacity: 0.7,
   },
   gradient: {
     paddingVertical: 16,
     borderRadius: 30,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
     elevation: 4,
   },
+  loadingContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
   buttonText: {
-    color: '#fff',
-    fontWeight: 'bold',
+    color: "#fff",
+    fontWeight: "bold",
     fontSize: 16,
   },
   registerContainer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
+    flexDirection: "row",
+    justifyContent: "center",
     marginTop: 30,
   },
   registerText: {
-    color: 'rgba(255, 255, 255, 0.8)',
+    color: "rgba(255, 255, 255, 0.8)",
     fontSize: 14,
   },
   registerLink: {
-    color: 'white',
+    color: "white",
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: "600",
   },
 });
