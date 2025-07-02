@@ -393,7 +393,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 16,
     fontSize: 16,
-    color: "#fff",
+    color: "#000",
     backgroundColor: "transparent",
   },
   bottomContainer: {
