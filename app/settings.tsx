@@ -68,18 +68,6 @@ export default function SettingsScreen() {
     router.push("/create-profile");
   };
 
-  const confirmLogout = () => {
-    Alert.alert(
-      "Confirm Logout",
-      "Are you sure you want to log out?",
-      [
-        { text: "Cancel", style: "cancel" },
-        { text: "Logout", style: "destructive", onPress: handleLogout },
-      ],
-      { cancelable: true }
-    );
-  };
-
   const handleLogout = async () => {
     try {
       await supabase.auth.signOut();
@@ -116,7 +104,10 @@ export default function SettingsScreen() {
 
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.headerIcon}>
+        <TouchableOpacity
+          onPress={() => router.back()}
+          style={styles.headerIcon}
+        >
           <Feather name="arrow-left" size={24} color="#fff" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Settings</Text>
@@ -198,7 +189,7 @@ export default function SettingsScreen() {
 
         {/* Logout Button pinned at bottom */}
         <View style={styles.logoutSection}>
-          <TouchableOpacity style={styles.logoutButton} onPress={confirmLogout}>
+          <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
             <Feather name="log-out" size={20} color="#d32f2f" />
             <Text style={styles.logoutText}>Logout</Text>
           </TouchableOpacity>
@@ -366,12 +357,24 @@ const styles = StyleSheet.create({
     borderTopColor: "#f0f0f0",
     paddingVertical: 16,
     paddingHorizontal: 20,
+    marginHorizontal: 20,
+    borderRadius: 12,
+    marginBottom: 30,
+    elevation: 4,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
   },
   logoutButton: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 12,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: "#d32f2f",
+    borderRadius: 12,
   },
   logoutText: {
     fontSize: 16,
