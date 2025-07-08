@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -11,7 +11,7 @@ import {
   TextInput,
   Pressable,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Toast from 'react-native-toast-message';
@@ -25,10 +25,13 @@ interface Chat {
     about: string;
     profile_picture_url: string | null;
     phone: string;
+    is_online?: boolean;
+    last_seen?: string;
   };
   lastMessage: string;
   lastMessageTime: string;
   unreadCount: number;
+  hasUnreadMessages?: boolean;
 }
 
 interface UserProfile {
@@ -50,10 +53,13 @@ export default function ChatsScreen() {
   const [menuVisible, setMenuVisible] = useState(false);
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
 
-  useEffect(() => {
-    loadCurrentUser();
-    loadChats();
-  }, []);
+  // Load chats when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      loadCurrentUser();
+      loadChats();
+    }, [])
+  );
 
   const loadCurrentUser = async () => {
     try {
@@ -76,48 +82,82 @@ export default function ChatsScreen() {
 
   const loadChats = async () => {
     try {
-      const sampleChats: Chat[] = [
-        {
-          id: '1',
-          participant: {
-            id: '1',
-            username: 'john_doe',
-            about: 'Love to travel ✈️',
-            profile_picture_url: 'https://images.pexels.com/photos/220453/pexels-photo-220453.jpeg?auto=compress&cs=tinysrgb&w=150&h=150&fit=crop',
-            phone: '+1234567890',
-          },
-          lastMessage: 'Hey! How are you doing?',
-          lastMessageTime: '2 min ago',
-          unreadCount: 2,
-        },
-        {
-          id: '2',
-          participant: {
-            id: '2',
-            username: 'sarah_wilson',
-            about: 'Coffee enthusiast ☕📚',
-            profile_picture_url: 'https://images.pexels.com/photos/415829/pexels-photo-415829.jpeg?auto=compress&cs=tinysrgb&w=150&h=150&fit=crop',
-            phone: '+1234567891',
-          },
-          lastMessage: 'Thanks for the recommendation!',
-          lastMessageTime: '1 hour ago',
-          unreadCount: 0,
-        },
-        {
-          id: '3',
-          participant: {
-            id: '3',
-            username: 'mike_tech',
-            about: 'Tech geek 💻',
-            profile_picture_url: null,
-            phone: '+1234567892',
-          },
-          lastMessage: 'Let\'s catch up soon',
-          lastMessageTime: 'Yesterday',
-          unreadCount: 1,
-        },
-      ];
-      setChats(sampleChats);
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      // Get current user's profile
+      const { data: currentUserProfile } = await supabase
+        .from('user_profiles')
+        .select('id')
+        .eq('auth_user_id', session.user.id)
+        .single();
+
+      if (!currentUserProfile) return;
+
+      // Load chats with participant details and last message
+      const { data: chatsData, error } = await supabase
+        .from('chats')
+        .select(`
+          id,
+          participant_1,
+          participant_2,
+          created_at,
+          updated_at,
+          last_message_id,
+          messages:last_message_id(
+            id,
+            content,
+            created_at,
+            sender_id
+          )
+        `)
+        .or(`participant_1.eq.${currentUserProfile.id},participant_2.eq.${currentUserProfile.id}`)
+        .order('updated_at', { ascending: false });
+
+      if (error) {
+        throw error;
+      }
+
+      // Transform chats data to include participant info
+      const transformedChats: Chat[] = [];
+
+      for (const chat of chatsData || []) {
+        // Determine the other participant
+        const otherParticipantId = chat.participant_1 === currentUserProfile.id 
+          ? chat.participant_2 
+          : chat.participant_1;
+
+        // Get participant details
+        const { data: participantData } = await supabase
+          .from('user_profiles')
+          .select('id, username, about, profile_picture_url, phone, is_online, last_seen')
+          .eq('id', otherParticipantId)
+          .single();
+
+        if (participantData) {
+          // Get unread count for this chat
+          const { data: unreadCount } = await supabase
+            .rpc('get_unread_count', {
+              p_chat_id: chat.id,
+              p_user_id: currentUserProfile.id,
+            });
+
+          const lastMessage = chat.messages;
+          const transformedChat: Chat = {
+            id: chat.id,
+            participant: participantData,
+            lastMessage: lastMessage?.content || 'No messages yet',
+            lastMessageTime: lastMessage?.created_at 
+              ? formatMessageTime(lastMessage.created_at)
+              : formatMessageTime(chat.created_at),
+            unreadCount: unreadCount || 0,
+            hasUnreadMessages: (unreadCount || 0) > 0,
+          };
+          transformedChats.push(transformedChat);
+        }
+      }
+
+      setChats(transformedChats);
     } catch (error: any) {
       console.error('Error loading chats:', error);
       Toast.show({
@@ -128,6 +168,30 @@ export default function ChatsScreen() {
     } finally {
       setLoading(false);
       setRefreshing(false);
+    }
+  };
+
+  const formatMessageTime = (timestamp: string) => {
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffInMinutes = Math.floor((now.getTime() - date.getTime()) / (1000 * 60));
+    
+    if (diffInMinutes < 1) {
+      return 'Just now';
+    } else if (diffInMinutes < 60) {
+      return `${diffInMinutes} min ago`;
+    } else if (diffInMinutes < 1440) {
+      const hours = Math.floor(diffInMinutes / 60);
+      return `${hours} hour${hours > 1 ? 's' : ''} ago`;
+    } else {
+      const days = Math.floor(diffInMinutes / 1440);
+      if (days === 1) {
+        return 'Yesterday';
+      } else if (days < 7) {
+        return `${days} days ago`;
+      } else {
+        return date.toLocaleDateString();
+      }
     }
   };
 
@@ -164,28 +228,98 @@ export default function ChatsScreen() {
           <Image source={{ uri: item.participant.profile_picture_url }} style={styles.avatar} />
         ) : (
           <View style={styles.avatarPlaceholder}>
-            <Feather name='users' size={24} color="#666" />
+            <Feather name="user" size={24} color="#666" />
           </View>
         )}
-        {item.unreadCount > 0 && <View style={styles.onlineIndicator} />}
+        {item.participant.is_online && <View style={styles.onlineIndicator} />}
       </View>
 
       <View style={styles.chatContent}>
         <View style={styles.chatHeader}>
           <Text style={styles.username}>@{item.participant.username}</Text>
-          <Text style={styles.timestamp}>{item.lastMessageTime}</Text>
+          <View style={styles.chatMeta}>
+            {item.hasUnreadMessages && <View style={styles.unreadDot} />}
+            <Text style={styles.timestamp}>{item.lastMessageTime}</Text>
+          </View>
         </View>
         <View style={styles.messageRow}>
-          <Text style={styles.lastMessage} numberOfLines={1}>{item.lastMessage}</Text>
+          <Text 
+            style={[
+              styles.lastMessage,
+              item.hasUnreadMessages && styles.unreadMessage
+            ]} 
+            numberOfLines={1}
+          >
+            {item.lastMessage}
+          </Text>
           {item.unreadCount > 0 && (
             <View style={styles.unreadBadge}>
-              <Text style={styles.unreadCount}>{item.unreadCount}</Text>
+              <Text style={styles.unreadCount}>
+                {item.unreadCount > 99 ? '99+' : item.unreadCount}
+              </Text>
             </View>
           )}
         </View>
+        
+        {/* Last seen indicator for offline users */}
+        {!item.participant.is_online && item.participant.last_seen && (
+          <Text style={styles.lastSeen}>
+            Last seen {formatMessageTime(item.participant.last_seen)}
+          </Text>
+        )}
       </View>
     </TouchableOpacity>
   );
+
+  // const renderChatItem = ({ item }: { item: Chat }) => (
+  //   <TouchableOpacity style={styles.chatItem} onPress={() => handleChatPress(item)}>
+  //     <View style={styles.avatarContainer}>
+  //       {item.participant.profile_picture_url ? (
+  //         <Image source={{ uri: item.participant.profile_picture_url }} style={styles.avatar} />
+  //       ) : (
+  //         <View style={styles.avatarPlaceholder}>
+  //           <Feather name="user" size={24} color="#666" />
+  //         </View>
+  //       )}
+  //       {item.participant.is_online && <View style={styles.onlineIndicator} />}
+  //     </View>
+
+  //     <View style={styles.chatContent}>
+  //       <View style={styles.chatHeader}>
+  //         <Text style={styles.username}>@{item.participant.username}</Text>
+  //         <View style={styles.chatMeta}>
+  //           {item.hasUnreadMessages && <View style={styles.unreadDot} />}
+  //         <Text style={styles.timestamp}>{item.lastMessageTime}</Text>
+  //         </View>
+  //       </View>
+  //       <View style={styles.messageRow}>
+  //         <Text 
+  //           style={[
+  //             styles.lastMessage,
+  //             item.hasUnreadMessages && styles.unreadMessage
+  //           ]} 
+  //           numberOfLines={1}
+  //         >
+  //           {item.lastMessage}
+  //         </Text>
+  //         {item.unreadCount > 0 && (
+  //           <View style={styles.unreadBadge}>
+  //             <Text style={styles.unreadCount}>
+  //               {item.unreadCount > 99 ? '99+' : item.unreadCount}
+  //             </Text>
+  //           </View>
+  //         )}
+  //       </View>
+        
+  //       {/* Last seen indicator for offline users */}
+  //       {!item.participant.is_online && item.participant.last_seen && (
+  //         <Text style={styles.lastSeen}>
+  //           Last seen {formatMessageTime(item.participant.last_seen)}
+  //         </Text>
+  //       )}
+  //     </View>
+  //   </TouchableOpacity>
+  // );
 
   const renderEmptyState = () => (
     <View style={styles.emptyState}>
@@ -357,26 +491,54 @@ const styles = StyleSheet.create({
   chatContent: { flex: 1 },
   chatHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 4,
+  },
+  chatMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginLeft: 'auto',
+    gap: 6,
+  },
+  unreadDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#3A805B',
   },
   username: { fontSize: 16, fontWeight: '600', color: '#3A805B' },
   timestamp: { fontSize: 12, color: '#999' },
   messageRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 8,
   },
   lastMessage: { flex: 1, fontSize: 14, color: '#666' },
+  unreadMessage: {
+    fontWeight: '600',
+    color: '#333',
+  },
+  lastSeen: {
+    fontSize: 12,
+    color: '#999',
+    marginTop: 2,
+  },
   unreadBadge: {
     backgroundColor: '#3A805B',
     borderRadius: 10,
-    minWidth: 20,
-    height: 20,
+    minWidth: 18,
+    height: 18,
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 6,
+    marginLeft: 'auto',
   },
-  unreadCount: { color: '#fff', fontSize: 12, fontWeight: '600' },
+  unreadCount: { 
+    color: '#fff', 
+    fontSize: 11, 
+    fontWeight: '700',
+    textAlign: 'center',
+  },
   fab: {
     position: 'absolute',
     bottom: 30,
@@ -410,27 +572,27 @@ const styles = StyleSheet.create({
     lineHeight: 24,
   },
   menuOverlay: {
-  position: 'absolute',
-  top: 80,
-  right: 0,
-  left: 0,
-  bottom: 0,
-  zIndex: 10,
-},
-menu: {
-  position: 'absolute',
-  top: 0,
-  right: 10,
-  backgroundColor: '#fff',
-  borderRadius: 6,
-  elevation: 5,
-  shadowColor: '#000',
-  shadowOffset: { width: 0, height: 2 },
-  shadowOpacity: 0.25,
-  shadowRadius: 3.84,
-  width: 160,
-  zIndex: 11,
-},
+    position: 'absolute',
+    top: 80,
+    right: 0,
+    left: 0,
+    bottom: 0,
+    zIndex: 10,
+  },
+  menu: {
+    position: 'absolute',
+    top: 0,
+    right: 10,
+    backgroundColor: '#fff',
+    borderRadius: 6,
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    width: 160,
+    zIndex: 11,
+  },
   menuItem: {
     paddingVertical: 12,
     paddingHorizontal: 16,
