@@ -13,13 +13,11 @@ import {
   Alert,
 } from 'react-native';
 import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
+import { Feather } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import Toast from 'react-native-toast-message';
-import { Feather } from '@expo/vector-icons'
 import { useRealtimeChat } from '@/hooks/useRealtimeChat';
 import MessageItem from '@/components/MessageItem';
-import TypingIndicator from '@/components/TypingIndicator';
-import UserPresenceIndicator from '@/components/UserPresenceIndicator';
 
 interface ChatParticipant {
   id: string;
@@ -29,10 +27,20 @@ interface ChatParticipant {
   phone: string;
 }
 
+// ADDED: Interface for contact information
+interface ContactInfo {
+  id?: string;
+  first_name?: string;
+  last_name?: string;
+  is_saved: boolean;
+}
+
 export default function ChatScreen() {
   const router = useRouter();
   const { id: chatId } = useLocalSearchParams<{ id: string }>();
   const [participant, setParticipant] = useState<ChatParticipant | null>(null);
+  // ADDED: State for contact information
+  const [contactInfo, setContactInfo] = useState<ContactInfo>({ is_saved: false });
   const [currentUserId, setCurrentUserId] = useState<string>('');
   const [messageText, setMessageText] = useState('');
   const [loading, setLoading] = useState(true);
@@ -68,6 +76,44 @@ export default function ChatScreen() {
       }
     }, [chatId, currentUserId, participant?.id])
   );
+
+  // ADDED: Function to load contact information
+  const loadContactInfo = async (participantId: string, participantPhone: string) => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      const { data: currentUserProfile } = await supabase
+        .from('user_profiles')
+        .select('id')
+        .eq('auth_user_id', session.user.id)
+        .single();
+
+      if (!currentUserProfile) return;
+
+      // Check if this user is saved as a contact
+      const { data: contact } = await supabase
+        .from('contacts')
+        .select('id, first_name, last_name')
+        .eq('owner_id', currentUserProfile.id)
+        .eq('contact_user_id', participantId)
+        .single();
+
+      if (contact) {
+        setContactInfo({
+          id: contact.id,
+          first_name: contact.first_name,
+          last_name: contact.last_name,
+          is_saved: true,
+        });
+      } else {
+        setContactInfo({ is_saved: false });
+      }
+    } catch (error) {
+      console.error('Error loading contact info:', error);
+      setContactInfo({ is_saved: false });
+    }
+  };
 
   const loadChatDetails = async () => {
     try {
@@ -115,6 +161,8 @@ export default function ChatScreen() {
       }
 
       setParticipant(participantData);
+      // ADDED: Load contact information after setting participant
+      await loadContactInfo(participantData.id, participantData.phone);
     } catch (error: any) {
       console.error('Error loading chat details:', error);
       Toast.show({
@@ -184,9 +232,11 @@ export default function ChatScreen() {
   };
 
   const handleCall = () => {
+    // MODIFIED: Use display name instead of username
+    const displayName = getDisplayName();
     Alert.alert(
       'Voice Call',
-      `Call @${participant?.username}?`,
+      `Call ${displayName}?`,
       [
         { text: 'Cancel', style: 'cancel' },
         { 
@@ -204,9 +254,11 @@ export default function ChatScreen() {
   };
 
   const handleVideoCall = () => {
+    // MODIFIED: Use display name instead of username
+    const displayName = getDisplayName();
     Alert.alert(
       'Video Call',
-      `Video call @${participant?.username}?`,
+      `Video call ${displayName}?`,
       [
         { text: 'Cancel', style: 'cancel' },
         { 
@@ -221,6 +273,66 @@ export default function ChatScreen() {
         },
       ]
     );
+  };
+
+  // ADDED: Function to get display name (contact name or phone number)
+  const getDisplayName = () => {
+    if (contactInfo.is_saved && contactInfo.first_name) {
+      return `${contactInfo.first_name}${contactInfo.last_name ? ` ${contactInfo.last_name}` : ''}`;
+    }
+    return participant?.phone || 'Unknown';
+  };
+
+  // ADDED: Function to handle profile view
+  const handleProfileView = () => {
+    if (!participant) return;
+    
+    router.push({
+      pathname: '/user-profile',
+      params: {
+        userId: participant.id,
+        username: participant.username,
+        about: participant.about,
+        profilePicture: participant.profile_picture_url || '',
+        phone: participant.phone,
+        isOnline: otherUserPresence?.is_online ? 'true' : 'false',
+        lastSeen: otherUserPresence?.last_seen || '',
+        isSaved: contactInfo.is_saved ? 'true' : 'false',
+        contactId: contactInfo.id || '',
+        contactName: contactInfo.is_saved ? getDisplayName() : '',
+      },
+    });
+  };
+
+  // ADDED: Function to format presence status
+  const getPresenceText = () => {
+    if (!otherUserPresence) return '';
+    
+    if (otherUserPresence.is_online) {
+      return 'Online';
+    }
+    
+    const lastSeen = new Date(otherUserPresence.last_seen);
+    const now = new Date();
+    const diffInMinutes = Math.floor((now.getTime() - lastSeen.getTime()) / (1000 * 60));
+    
+    if (diffInMinutes < 1) {
+      return 'Just now';
+    } else if (diffInMinutes < 60) {
+      return `${diffInMinutes} min ago`;
+    } else if (diffInMinutes < 1440) {
+      const hours = Math.floor(diffInMinutes / 60);
+      return `${hours} hour${hours > 1 ? 's' : ''} ago`;
+    } else {
+      const days = Math.floor(diffInMinutes / 1440);
+      if (days === 1) {
+        return 'Yesterday';
+      } else if (days < 7) {
+        return `${days} days ago`;
+      } else {
+        return lastSeen.toLocaleDateString();
+      }
+    }
   };
 
   const renderMessage = ({ item, index }: { item: any; index: number }) => {
@@ -271,7 +383,7 @@ export default function ChatScreen() {
     return (
       <View style={styles.errorContainer}>
         <Text style={styles.errorText}>Chat not found</Text>
-        <TouchableOpacity onPress={() => router.back()}>
+        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
           <Text style={styles.backButtonText}>Go Back</Text>
         </TouchableOpacity>
       </View>
@@ -286,27 +398,33 @@ export default function ChatScreen() {
     >
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.replace('/(tabs)')}>
-          <Feather name='chevron-left' size={20} color="#fff" />
+        <TouchableOpacity style={styles.headerButton} onPress={() => router.back()}>
+          <Feather name='chevron-left' size={24} color="#fff" />
         </TouchableOpacity>
 
         <View style={styles.headerCenter}>
-          <View style={styles.participantInfo}>
+          {/* MODIFIED: Made participant info clickable */}
+          <TouchableOpacity style={styles.participantInfo} onPress={handleProfileView}>
             {participant.profile_picture_url ? (
               <Image source={{ uri: participant.profile_picture_url }} style={styles.headerAvatar} />
             ) : (
               <View style={styles.headerAvatarPlaceholder}>
-                <Text style={styles.headerAvatarText}>
-                  {participant.username.charAt(0).toUpperCase()}
-                </Text>
+                {/* MODIFIED: Show first letter of display name */}
+                <Feather name='user' size={20} color="#fff" />
               </View>
             )}
             
             <View style={styles.headerTextContainer}>
-              <Text style={styles.headerTitle}>{participant.username}</Text>
-              <UserPresenceIndicator presence={otherUserPresence} />
+              {/* MODIFIED: Show contact name or phone number */}
+              <Text style={styles.headerTitle}>{getDisplayName()}</Text>
+              {/* ADDED: Show typing indicator under name when user is typing */}
+              {typingUsers.length > 0 ? (
+                <Text style={styles.typingText}>typing...</Text>
+              ) : (
+                <Text style={styles.presenceText}>{getPresenceText()}</Text>
+              )}
             </View>
-          </View>
+          </TouchableOpacity>
         </View>
 
         <View style={styles.headerActions}>
@@ -335,14 +453,11 @@ export default function ChatScreen() {
         ListEmptyComponent={
           <View style={styles.emptyState}>
             <Text style={styles.emptyStateText}>
-              Start your conversation with @{participant.username}
+              Start your conversation with {getDisplayName()}
             </Text>
           </View>
         }
       />
-
-      {/* Typing Indicator */}
-      <TypingIndicator typingUsers={typingUsers} />
 
       {/* Message Input */}
       <View style={styles.inputContainer}>
@@ -402,12 +517,12 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     textAlign: 'center',
   },
-  // backButton: {
-  //   backgroundColor: '#3A805B',
-  //   paddingHorizontal: 24,
-  //   paddingVertical: 12,
-  //   borderRadius: 25,
-  // },
+  backButton: {
+    backgroundColor: '#3A805B',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 25,
+  },
   backButtonText: {
     color: '#fff',
     fontSize: 16,
@@ -416,8 +531,8 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingTop: 16,
+    paddingHorizontal: 16,
+    paddingTop: 60,
     paddingBottom: 16,
     backgroundColor: '#3A805B',
     shadowColor: '#000',
@@ -450,7 +565,6 @@ const styles = StyleSheet.create({
     height: 40,
     borderRadius: 20,
     marginRight: 12,
-    marginLeft: -15,
   },
   headerAvatarPlaceholder: {
     width: 40,
@@ -474,6 +588,17 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#fff',
     marginBottom: 2,
+  },
+  // ADDED: Style for typing text under name
+  typingText: {
+    fontSize: 12,
+    color: 'rgba(255, 255, 255, 0.9)',
+    fontStyle: 'italic',
+  },
+  // ADDED: Style for presence text under name
+  presenceText: {
+    fontSize: 12,
+    color: 'rgba(255, 255, 255, 0.8)',
   },
   headerActions: {
     flexDirection: 'row',

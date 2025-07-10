@@ -29,7 +29,7 @@ export default function MessageItem({
     if (isReadByOther) {
       return <Feather name='check' size={14} color="#4CAF50" />;
     } else {
-      return <Feather name='check' size={14} color="#999" />;
+      return <Feather name='user' size={14} color="#999" />;
     }
   };
 
