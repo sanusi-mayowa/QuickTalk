@@ -10,6 +10,8 @@ import {
   Platform,
   ScrollView,
   ActivityIndicator,
+  TouchableWithoutFeedback,
+  Keyboard,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Feather } from "@expo/vector-icons";
@@ -73,7 +75,7 @@ export default function VerifyScreen() {
     setResendLoading(true);
 
     try {
-      const response = await fetch("http://localhost:5000/api/resend-otp", {
+      const response = await fetch("https://quicktalk-backend-jduv.onrender.com/api/resend-otp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email }),
@@ -127,7 +129,7 @@ export default function VerifyScreen() {
     setLoading(true);
 
     try {
-      const response = await fetch("http://localhost:5000/api/verify-otp", {
+      const response = await fetch("https://quicktalk-backend-jduv.onrender.com/api/verify-otp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, otp: enteredCode }),
@@ -176,18 +178,14 @@ export default function VerifyScreen() {
   };
 
   return (
-    <View style={styles.container}>
+   <View style={styles.container}>
+    <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
       <KeyboardAvoidingView
         style={{ flex: 1 }}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
       >
-        <ScrollView contentContainerStyle={styles.scrollView}>
-          <TouchableOpacity
-            onPress={() => router.push("/(auth)/signup")}
-            style={styles.backButton}
-          >
-            <Feather name="arrow-left" size={20} color="#fff" />
-          </TouchableOpacity>
+        <ScrollView contentContainerStyle={styles.scrollView}
+        keyboardShouldPersistTaps='handled'>
 
           <View style={styles.logoContainer}>
             <Image
@@ -324,9 +322,10 @@ export default function VerifyScreen() {
               )}
             </LinearGradient>
           </TouchableOpacity>
-        </ScrollView>
+           </ScrollView>
       </KeyboardAvoidingView>
-    </View>
+    </TouchableWithoutFeedback>
+  </View>
   );
 }
 
@@ -339,17 +338,9 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     padding: 24,
   },
-  backButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "rgba(255, 255, 255, 0.2)",
-    justifyContent: "center",
-    alignItems: "center",
-    marginTop: 10,
-  },
   logoContainer: {
     alignItems: "center",
+    marginTop: 60,
   },
   logo: {
     width: 60,

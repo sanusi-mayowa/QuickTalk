@@ -34,7 +34,7 @@ export default function GetStartedScreen() {
         <View style={styles.logoContainer}>
           <Image source={require('../../assets/images/logo.png')} style={styles.logo} />
           <View style={styles.QuickTalkLogoContainer}>
-            <Image source={require('../../assets/images/QuickTalk.png')} style={styles.QuickTalkLogo} />
+            <Text style={styles.title}>QuickTalk</Text>
           </View>
 
           <Text style={styles.subtitle}>The #1 trusted messaging app</Text>
@@ -100,17 +100,14 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   QuickTalkLogoContainer: {
-    // width: '100%',
     marginTop: 12,
-  },
-  QuickTalkLogo: {
-    marginBottom: 12,
   },
   title: {
     fontSize: 32,
     fontWeight: 'bold',
     color: 'white',
-    textTransform: 'lowercase',
+    textAlign: 'center',
+    letterSpacing: 0.5,
   },
   subtitle: {
     fontSize: 16,

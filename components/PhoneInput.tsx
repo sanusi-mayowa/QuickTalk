@@ -11,6 +11,8 @@ import {
   Image,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { StatusBar, Platform } from 'react-native';
+
 
 const COUNTRIES = [
   { code: 'US', name: 'United States', dialCode: '+1', flag: '🇺🇸' },
@@ -177,9 +179,9 @@ export default function PhoneInput({
       <Modal
         visible={showCountryPicker}
         animationType="slide"
-        presentationStyle="pageSheet"
+        presentationStyle="fullScreen"
       >
-        <SafeAreaView style={styles.modal}>
+      <SafeAreaView style={styles.modal}>
           <View style={styles.modalHeader}>
             <TouchableOpacity
               style={styles.closeButton}
@@ -223,7 +225,7 @@ const styles = StyleSheet.create({
   container: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f8f9fa',
+    backgroundColor: 'rgb(232, 240, 254)',
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#e9ecef',
@@ -258,7 +260,7 @@ const styles = StyleSheet.create({
   },
   modal: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: '#ff',
   },
   modalHeader: {
     flexDirection: 'row',

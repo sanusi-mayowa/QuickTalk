@@ -9,6 +9,10 @@ import {
   Image,
   ActivityIndicator,
   RefreshControl,
+  KeyboardAvoidingView,
+  TouchableWithoutFeedback,
+  Keyboard,
+  Platform,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
@@ -537,53 +541,58 @@ export default function ContactsScreen() {
   }
 
   return (
-    <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton} onPress={() => router.push('/(tabs)')}>
-          <Feather name='arrow-left' size={24} color="#fff" />
-        </TouchableOpacity>
-        <View style={styles.headerLeft}>
-          <Text style={styles.title}> Select Contacts</Text>
-        </View>
-        
-        {/* <TouchableOpacity style={styles.addButton} onPress={handleAddContact}>
-          <Feather name='user-plus' size={24} color="#fff" />
-        </TouchableOpacity> */}
-      </View>
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 100 : 0}
+    >
+      <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+        <View style={styles.container}>
+          {/* Header */}
+          <View style={styles.header}>
+            <TouchableOpacity style={styles.backButton} onPress={() => router.push('/(tabs)')}>
+              <Feather name='chevron-left' size={24} color="#fff" />
+            </TouchableOpacity>
+            <View style={styles.headerLeft}>
+              <Text style={styles.title}> Select Contacts</Text>
+            </View>
+          </View>
 
-      {/* Search Bar */}
-      <View style={styles.searchContainer}>
-        <View style={styles.searchInputContainer}>
-          <Feather name='search' size={20} color="#666" />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search contacts..."
-            value={searchQuery}
-            onChangeText={setSearchQuery}
+          {/* Search Bar */}
+          <View style={styles.searchContainer}>
+            <View style={styles.searchInputContainer}>
+              <Feather name='search' size={20} color="#666" />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Search contacts..."
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+              />
+            </View>
+          </View>
+
+          {/* Contact List */}
+          <FlatList
+            data={filteredContacts}
+            renderItem={renderContactItem}
+            keyExtractor={(item) => item.id}
+            contentContainerStyle={styles.listContainer}
+            showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={onRefresh}
+                colors={['#3A805B']}
+                tintColor="#3A805B"
+              />
+            }
+            ListEmptyComponent={renderEmptyState}
+            ListHeaderComponent={(contacts.length > 0 || users.length > 0) ? renderHeader : null}
+            keyboardShouldPersistTaps="handled"
           />
         </View>
-      </View>
-
-      {/* Contact List */}
-      <FlatList
-        data={filteredContacts}
-        renderItem={renderContactItem}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.listContainer}
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            colors={['#3A805B']}
-            tintColor="#3A805B"
-          />
-        }
-        ListEmptyComponent={renderEmptyState}
-        ListHeaderComponent={(contacts.length > 0 || users.length > 0) ? renderHeader : null}
-      />
-    </View>
+      </TouchableWithoutFeedback>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -591,13 +600,14 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f8f9fa',
+    paddingBottom: 30,
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingTop: 16,
+    paddingTop: 40,
     paddingBottom: 16,
     backgroundColor: '#3A805B',
   },
@@ -608,16 +618,9 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '600',
     color: '#fff',
-    marginBottom: 4,
     letterSpacing: 0.5,
   },
    backButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "rgba(255, 255, 255, 0.2)",
-    justifyContent: "center",
-    alignItems: "center",
     marginRight: 16,
   },
   subtitle: {

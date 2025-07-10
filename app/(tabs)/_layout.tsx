@@ -3,6 +3,7 @@ import { Feather } from '@expo/vector-icons';
 
 export default function TabLayout() {
   return (
+    
     <Tabs
       screenOptions={{
         headerShown: false,
@@ -12,7 +13,7 @@ export default function TabLayout() {
             backgroundColor: '#3A805B',
             borderTopWidth: 1,
             borderTopColor: '#EFEFEF',
-            height: 90,
+            height: 120,
             paddingBottom: 8,
             paddingTop: 8,
             justifyContent: 'center',

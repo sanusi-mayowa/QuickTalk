@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -8,7 +8,7 @@ import {
   ScrollView,
   Image,
   ActivityIndicator,
-  Alert,
+  KeyboardAvoidingView,
   Platform,
 } from "react-native";
 import { useRouter } from "expo-router";
@@ -42,6 +42,7 @@ export default function CreateProfileScreen() {
   const [userEmail, setUserEmail] = useState("");
   const [showCamera, setShowCamera] = useState(false);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
+  const cameraRef = useRef(null);
 
   useEffect(() => {
     loadUserData();
@@ -54,8 +55,6 @@ export default function CreateProfileScreen() {
       } = await supabase.auth.getSession();
       if (session) {
         setUserEmail(session.user.email || "");
-
-        // Try to get existing profile data
         const { data: profile } = await supabase
           .from("user_profiles")
           .select("*")
@@ -68,7 +67,6 @@ export default function CreateProfileScreen() {
           setProfileImage(profile.profile_picture_url);
           setUserPhone(profile.phone || "");
         } else {
-          // Get phone from user metadata
           setUserPhone(session.user.user_metadata?.phone || "");
         }
       }
@@ -79,7 +77,6 @@ export default function CreateProfileScreen() {
 
   const handleImagePicker = async () => {
     if (Platform.OS === "web") {
-      // Web implementation
       const input = document.createElement("input");
       input.type = "file";
       input.accept = "image/*";
@@ -95,7 +92,6 @@ export default function CreateProfileScreen() {
       };
       input.click();
     } else {
-      // Mobile implementation
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
@@ -135,14 +131,6 @@ export default function CreateProfileScreen() {
     setShowCamera(true);
   };
 
-  const takePicture = async (camera: any) => {
-    if (camera) {
-      const photo = await camera.takePictureAsync();
-      setProfileImage(photo.uri);
-      setShowCamera(false);
-    }
-  };
-
   const handleCreateProfile = async () => {
     if (!username.trim()) {
       Toast.show({
@@ -169,11 +157,8 @@ export default function CreateProfileScreen() {
       const {
         data: { session },
       } = await supabase.auth.getSession();
-      if (!session) {
-        throw new Error("No active session");
-      }
+      if (!session) throw new Error("No active session");
 
-      // Check if username is already taken
       const { data: existingUser } = await supabase
         .from("user_profiles")
         .select("username")
@@ -191,10 +176,8 @@ export default function CreateProfileScreen() {
         return;
       }
 
-      // Upload profile image if exists (simplified for demo)
       let profileImageUrl = profileImage;
 
-      // Create or update profile
       const profileData = {
         auth_user_id: session.user.id,
         username: username.trim(),
@@ -209,9 +192,7 @@ export default function CreateProfileScreen() {
         .from("user_profiles")
         .upsert(profileData, { onConflict: "auth_user_id" });
 
-      if (error) {
-        throw error;
-      }
+      if (error) throw error;
 
       Toast.show({
         type: "success",
@@ -235,15 +216,7 @@ export default function CreateProfileScreen() {
   if (showCamera && Platform.OS !== "web") {
     return (
       <View style={styles.cameraContainer}>
-        <CameraView
-          style={styles.camera}
-          facing="front"
-          ref={(ref) => {
-            if (ref) {
-              // Camera ref handling
-            }
-          }}
-        >
+        <CameraView style={styles.camera} facing="front" ref={cameraRef}>
           <View style={styles.cameraControls}>
             <TouchableOpacity
               style={styles.cancelButton}
@@ -253,7 +226,13 @@ export default function CreateProfileScreen() {
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.captureButton}
-              onPress={() => takePicture}
+              onPress={async () => {
+                if (cameraRef.current) {
+                  const photo = await cameraRef.current.takePictureAsync();
+                  setProfileImage(photo.uri);
+                  setShowCamera(false);
+                }
+              }}
             >
               <View style={styles.captureButtonInner} />
             </TouchableOpacity>
@@ -265,6 +244,10 @@ export default function CreateProfileScreen() {
 
   return (
     <View style={styles.container}>
+      <KeyboardAvoidingView
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      style={{ flex: 1 }}
+    >
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.header}>
           <Text style={styles.title}>Create Your Profile</Text>
@@ -426,6 +409,7 @@ export default function CreateProfileScreen() {
           </LinearGradient>
         </TouchableOpacity>
       </ScrollView>
+      </KeyboardAvoidingView>
     </View>
   );
 }
@@ -628,6 +612,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "flex-end",
     padding: 20,
+    marginBottom: 20,
   },
   cancelButton: {
     backgroundColor: "rgba(0,0,0,0.5)",

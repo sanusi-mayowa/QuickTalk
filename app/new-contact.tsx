@@ -115,7 +115,7 @@ export default function NewContactScreen() {
     <View style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity style={styles.backButton} onPress={() => router.replace('/select-contact')}>
-          <Feather name="arrow-left" size={22} color="#fff" />
+          <Feather name="chevron-left" size={22} color="#fff" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>New Contact</Text>
       </View>
@@ -186,6 +186,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#3A805B',
     paddingHorizontal: 16,
     paddingVertical: 18,
+    paddingTop: 40,
   },
   backButton: {
     marginRight: 16,

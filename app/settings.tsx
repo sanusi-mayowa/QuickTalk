@@ -100,7 +100,7 @@ export default function SettingsScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+      <StatusBar barStyle="light-content" backgroundColor="#3A805B" />
 
       {/* Header */}
       <View style={styles.header}>
@@ -108,7 +108,7 @@ export default function SettingsScreen() {
           onPress={() => router.back()}
           style={styles.headerIcon}
         >
-          <Feather name="arrow-left" size={24} color="#fff" />
+          <Feather name="chevron-left" size={24} color="#fff" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Settings</Text>
         <TouchableOpacity style={styles.headerIcon}>
@@ -215,6 +215,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#3A805B",
     paddingHorizontal: 16,
     paddingVertical: 14,
+    paddingTop: 30,
   },
   headerIcon: {
     width: 32,

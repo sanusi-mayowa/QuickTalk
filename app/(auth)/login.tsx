@@ -10,6 +10,8 @@ import {
   ScrollView,
   Image,
   ActivityIndicator,
+  Keyboard,
+  TouchableWithoutFeedback,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -26,168 +28,181 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const isEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 
-const handleLogin = async () => {
-  try {
-    if (!email || !password) {
+  const handleLogin = async () => {
+    try {
+      if (!email || !password) {
+        Toast.show({
+          type: 'error',
+          text1: 'Validation Error',
+          text2: 'Please fill in all fields',
+        });
+        return;
+      }
+
+      setLoading(true);
+
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (error || !data.user) {
+        Toast.show({
+          type: 'error',
+          text1: 'Login Failed',
+          text2: error?.message || 'User not found',
+        });
+        setLoading(false);
+        return;
+      }
+
+      const userID = data.user.id;
+      await AsyncStorage.setItem('userID', userID);
+      await AsyncStorage.setItem('isAuthenticated', 'true');
+      await AsyncStorage.setItem('hasCompletedOnboarding', 'true');
+
+      const { data: profile, error: profileError } = await supabase
+        .from('user_profiles')
+        .select('id')
+        .eq('auth_user_id', userID)
+        .maybeSingle();
+
+      if (profileError) throw profileError;
+
+      Toast.show({
+        type: 'success',
+        text1: 'Login Successful',
+        text2: 'Welcome back!',
+      });
+
+      if (profile) {
+        router.replace('/(tabs)');
+      } else {
+        router.replace('/create-profile');
+      }
+    } catch (error) {
+      console.error('Login error:', error);
       Toast.show({
         type: 'error',
-        text1: 'Validation Error',
-        text2: 'Please fill in all fields',
+        text1: 'Unexpected Error',
+        text2: 'Something went wrong. Please try again.',
       });
-      return;
-    }
-
-    setLoading(true);
-
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-
-    if (error || !data.user) {
-      Toast.show({
-        type: 'error',
-        text1: 'Login Failed',
-        text2: error?.message || 'User not found',
-      });
+    } finally {
       setLoading(false);
-      return;
     }
-
-    const userID = data.user.id;
-    await AsyncStorage.setItem('userID', userID);
-    await AsyncStorage.setItem('isAuthenticated', 'true');
-    await AsyncStorage.setItem('hasCompletedOnboarding', 'true');
-
-    // ✅ Check if user has profile
-    const { data: profile, error: profileError } = await supabase
-      .from('user_profiles')
-      .select('id')
-      .eq('auth_user_id', userID)
-      .maybeSingle(); // Returns null if no row found
-
-    if (profileError) {
-      throw profileError;
-    }
-
-    Toast.show({
-      type: 'success',
-      text1: 'Login Successful',
-      text2: 'Welcome back!',
-    });
-
-    // ✅ Redirect based on whether profile exists
-    if (profile) {
-      router.replace('/(tabs)');
-    } else {
-      router.replace('/create-profile');
-    }
-
-  } catch (error) {
-    console.error('Login error:', error);
-    Toast.show({
-      type: 'error',
-      text1: 'Unexpected Error',
-      text2: 'Something went wrong. Please try again.',
-    });
-  } finally {
-    setLoading(false);
-  }
-};
-
+  };
 
   return (
     <View style={styles.container}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.keyboardAvoidingView}
-      >
-        <ScrollView contentContainerStyle={styles.scrollView}>
-          <View style={styles.logoContainer}>
-            <Image source={require('../../assets/images/logo.png')} style={styles.logo} />
-          </View>
-
-          <View style={styles.headerContainer}>
-            <Text style={styles.headerTitle}>Welcome back 👋 </Text>
-            <Text style={styles.headerSubtitle}>Sign in to continue</Text>
-          </View>
-
-          <View style={styles.formContainer}>
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>Email</Text>
-              <TextInput
-                style={styles.textInput}
-                placeholder="johndoe@email.com"
-                placeholderTextColor="gray"
-                value={email}
-                onChangeText={setEmail}
-                keyboardType="email-address"
-                autoCapitalize="none"
+      <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.keyboardAvoidingView}
+        >
+          <ScrollView
+            contentContainerStyle={styles.scrollView}
+            keyboardShouldPersistTaps="handled"
+          >
+            <View style={styles.logoContainer}>
+              <Image
+                source={require('../../assets/images/logo.png')}
+                style={styles.logo}
               />
-              {email.length > 0 && (
-                <Text style={{ color: isEmailValid ? '#4CAF50' : '#FF5252', marginTop: 4 }}>
-                  {isEmailValid
-                    ? '✓ Valid Gmail address'
-                    : '✗ Enter a valid email'}
-                </Text>
-              )}
             </View>
 
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>Password</Text>
-              <View style={styles.passwordContainer}>
+            <View style={styles.headerContainer}>
+              <Text style={styles.headerTitle}>Welcome back 👋</Text>
+              <Text style={styles.headerSubtitle}>Sign in to continue</Text>
+            </View>
+
+            <View style={styles.formContainer}>
+              <View style={styles.inputContainer}>
+                <Text style={styles.label}>Email</Text>
                 <TextInput
-                  style={styles.passwordInput}
-                  placeholder="Enter your password"
+                  style={styles.textInput}
+                  placeholder="johndoe@email.com"
                   placeholderTextColor="gray"
-                  value={password}
-                  onChangeText={setPassword}
-                  secureTextEntry={!showPassword}
+                  value={email}
+                  onChangeText={setEmail}
+                  keyboardType="email-address"
                   autoCapitalize="none"
                 />
-                <TouchableOpacity
-                  style={styles.eyeIcon}
-                  onPress={() => setShowPassword(!showPassword)}
-                >
-                  {showPassword ? (
-                    <Feather name="eye-off" size={20} color={"gray)"} />
-                  ) : (
-                    <Feather name="eye" size={20} color={"gray)"} />
+                {email.length > 0 && (
+                  <Text
+                    style={{
+                      color: isEmailValid ? '#4CAF50' : '#FF5252',
+                      marginTop: 4,
+                    }}
+                  >
+                    {isEmailValid
+                      ? '✓ Valid Gmail address'
+                      : '✗ Enter a valid email'}
+                  </Text>
+                )}
+              </View>
 
+              <View style={styles.inputContainer}>
+                <Text style={styles.label}>Password</Text>
+                <View style={styles.passwordContainer}>
+                  <TextInput
+                    style={styles.passwordInput}
+                    placeholder="Enter your password"
+                    placeholderTextColor="gray"
+                    value={password}
+                    onChangeText={setPassword}
+                    secureTextEntry={!showPassword}
+                    autoCapitalize="none"
+                  />
+                  <TouchableOpacity
+                    style={styles.eyeIcon}
+                    onPress={() => setShowPassword(!showPassword)}
+                  >
+                    <Feather
+                      name={showPassword ? 'eye-off' : 'eye'}
+                      size={20}
+                      color="gray"
+                    />
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              <View style={styles.statusContainer}>
+                <TouchableOpacity onPress={() => router.push('/(auth)/verify')}>
+                  <Text style={styles.forgotPasswordText}>VerifyAccount!!</Text>
+                </TouchableOpacity>
+                <TouchableOpacity>
+                  <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
+                </TouchableOpacity>
+              </View>
+
+              <TouchableOpacity
+                style={styles.buttonWrapper}
+                onPress={handleLogin}
+              >
+                <LinearGradient
+                  colors={['#F857A6', '#FF5858']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.gradient}
+                >
+                  {loading ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text style={styles.buttonText}>Sign In</Text>
                   )}
+                </LinearGradient>
+              </TouchableOpacity>
+
+              <View style={styles.registerContainer}>
+                <Text style={styles.registerText}>Don't have an account? </Text>
+                <TouchableOpacity onPress={() => router.push('/(auth)/signup')}>
+                  <Text style={styles.registerLink}>Sign Up</Text>
                 </TouchableOpacity>
               </View>
             </View>
-
-            <TouchableOpacity style={styles.forgotPassword}>
-              <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
-            </TouchableOpacity>
-
-            {/* Submit */}
-            <TouchableOpacity style={styles.buttonWrapper} onPress={handleLogin}>
-              <LinearGradient
-                colors={['#F857A6', '#FF5858']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-                style={styles.gradient}
-              >
-                {loading ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={styles.buttonText}>Sign In</Text>
-                )}
-              </LinearGradient>
-            </TouchableOpacity>
-
-            <View style={styles.registerContainer}>
-              <Text style={styles.registerText}>Don't have an account? </Text>
-              <TouchableOpacity onPress={() => router.push('/(auth)/signup')}>
-                <Text style={styles.registerLink}>Sign Up</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </TouchableWithoutFeedback>
     </View>
   );
 }
@@ -196,6 +211,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#3A805B',
+    paddingTop: 60,
   },
   keyboardAvoidingView: {
     flex: 1,
@@ -205,12 +221,12 @@ const styles = StyleSheet.create({
     padding: 24,
   },
   logoContainer: {
-    alignItems: 'center'
+    alignItems: 'center',
   },
   logo: {
     width: 60,
     height: 60,
-    marginBottom: 12
+    marginBottom: 12,
   },
   headerContainer: {
     marginTop: 25,
@@ -247,7 +263,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     borderWidth: 1,
     borderColor: '#3A805B',
-    // outlineStyle: 'none',
   },
   passwordContainer: {
     flexDirection: 'row',
@@ -262,26 +277,21 @@ const styles = StyleSheet.create({
     padding: 16,
     color: '#000',
     fontSize: 16,
-    // outlineStyle: 'none',
   },
   eyeIcon: {
     paddingHorizontal: 16,
     justifyContent: 'center',
   },
-  forgotPassword: {
-    alignSelf: 'flex-end',
-    marginBottom: 24,
+  statusContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 5,
+    marginBottom: 10,
+    paddingHorizontal: 10,
   },
   forgotPasswordText: {
     color: '#fff',
     fontSize: 14,
-  },
-  guidelines: {
-    marginTop: 10,
-    marginLeft: 8,
-    display: 'flex',
-    flexDirection: 'row',
-    gap: 4,
   },
   buttonWrapper: {
     width: '100%',
