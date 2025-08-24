@@ -6,10 +6,35 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    // Helper: userId may be a user_profiles doc ID or an auth UID
+    function userIdMatchesAuth(userId) {
+      return userId == request.auth.uid || (
+        exists(/databases/$(database)/documents/user_profiles/$(userId)) &&
+        get(/databases/$(database)/documents/user_profiles/$(userId)).data.auth_user_id == request.auth.uid
+      );
+    }
+
     // Helper to check if the authenticated user is a participant in the chat
     function isChatParticipant(chatId) {
-      return exists(/databases/$(database)/documents/chats/$(chatId)) &&
-        (get(/databases/$(database)/documents/chats/$(chatId)).data.participants.hasAny([request.auth.uid]));
+      return exists(/databases/$(database)/documents/chats/$(chatId)) && (
+        // Direct match on auth uid in participants
+        get(/databases/$(database)/documents/chats/$(chatId)).data.participants.hasAny([request.auth.uid]) ||
+        // Or participants contain profile IDs whose auth_user_id == auth.uid
+        (
+          (get(/databases/$(database)/documents/chats/$(chatId)).data.participants is list) &&
+          (
+            (
+              get(/databases/$(database)/documents/chats/$(chatId)).data.participants.size() > 0 &&
+              exists(/databases/$(database)/documents/user_profiles/$(get(/databases/$(database)/documents/chats/$(chatId)).data.participants[0])) &&
+              get(/databases/$(database)/documents/user_profiles/$(get(/databases/$(database)/documents/chats/$(chatId)).data.participants[0])).data.auth_user_id == request.auth.uid
+            ) || (
+              get(/databases/$(database)/documents/chats/$(chatId)).data.participants.size() > 1 &&
+              exists(/databases/$(database)/documents/user_profiles/$(get(/databases/$(database)/documents/chats/$(chatId)).data.participants[1])) &&
+              get(/databases/$(database)/documents/user_profiles/$(get(/databases/$(database)/documents/chats/$(chatId)).data.participants[1])).data.auth_user_id == request.auth.uid
+            )
+          )
+        )
+      );
     }
 
     // Default: deny everything
@@ -18,24 +43,67 @@ service cloud.firestore {
     }
 
     // User Profiles
-    // - Read allowed for signed-in users
-    // - Write allowed only to their own document (doc id == auth.uid)
     match /user_profiles/{userId} {
       allow read: if isSignedIn();
       allow create, update, delete: if isSignedIn() && userId == request.auth.uid;
     }
 
     // Chats
-    // Chat document contains participants: array of userIds (auth.uid values)
     match /chats/{chatId} {
-      allow read: if isSignedIn() && resource.data.participants.hasAny([request.auth.uid]);
-      allow create: if isSignedIn() && (request.resource.data.participants is list) &&
-        (request.resource.data.participants.hasAny([request.auth.uid]));
-      allow update, delete: if isSignedIn() && resource.data.participants.hasAny([request.auth.uid]);
+      // Read if current user is a participant (by auth.uid or mapped via user_profiles)
+      allow read: if isSignedIn() && (
+        resource.data.participants.hasAny([request.auth.uid]) || (
+          (resource.data.participants is list) && (
+            (
+              resource.data.participants.size() > 0 &&
+              exists(/databases/$(database)/documents/user_profiles/$(resource.data.participants[0])) &&
+              get(/databases/$(database)/documents/user_profiles/$(resource.data.participants[0])).data.auth_user_id == request.auth.uid
+            ) || (
+              resource.data.participants.size() > 1 &&
+              exists(/databases/$(database)/documents/user_profiles/$(resource.data.participants[1])) &&
+              get(/databases/$(database)/documents/user_profiles/$(resource.data.participants[1])).data.auth_user_id == request.auth.uid
+            )
+          )
+        )
+      );
+
+      // Create if requester is one of the participants (by auth.uid or via user_profiles mapping)
+      allow create: if isSignedIn() && (
+        (request.resource.data.participants is list) &&
+        (
+          request.resource.data.participants.hasAny([request.auth.uid]) ||
+          (
+            (request.resource.data.participants.size() > 0 &&
+              exists(/databases/$(database)/documents/user_profiles/$(request.resource.data.participants[0])) &&
+              get(/databases/$(database)/documents/user_profiles/$(request.resource.data.participants[0])).data.auth_user_id == request.auth.uid
+            ) ||
+            (request.resource.data.participants.size() > 1 &&
+              exists(/databases/$(database)/documents/user_profiles/$(request.resource.data.participants[1])) &&
+              get(/databases/$(database)/documents/user_profiles/$(request.resource.data.participants[1])).data.auth_user_id == request.auth.uid
+            )
+          )
+        )
+      );
+
+      // Update/delete if requester is a participant
+      allow update, delete: if isSignedIn() && (
+        resource.data.participants.hasAny([request.auth.uid]) || (
+          (resource.data.participants is list) && (
+            (
+              resource.data.participants.size() > 0 &&
+              exists(/databases/$(database)/documents/user_profiles/$(resource.data.participants[0])) &&
+              get(/databases/$(database)/documents/user_profiles/$(resource.data.participants[0])).data.auth_user_id == request.auth.uid
+            ) || (
+              resource.data.participants.size() > 1 &&
+              exists(/databases/$(database)/documents/user_profiles/$(resource.data.participants[1])) &&
+              get(/databases/$(database)/documents/user_profiles/$(resource.data.participants[1])).data.auth_user_id == request.auth.uid
+            )
+          )
+        )
+      );
     }
 
     // Messages
-    // Each message has chat_id and sender_id
     match /messages/{messageId} {
       allow read: if isSignedIn() && isChatParticipant(resource.data.chat_id);
       allow create: if isSignedIn() &&
@@ -44,30 +112,24 @@ service cloud.firestore {
         isChatParticipant(request.resource.data.chat_id);
       // Allow updates limited to read receipts, deliveries, reactions, content edits by sender
       allow update: if isSignedIn() && isChatParticipant(resource.data.chat_id) && (
-        // Sender can edit content within chat
         (request.auth.uid == resource.data.sender_id) ||
-        // Any participant may add themselves to read_by or delivered_to arrays
         (request.resource.data.read_by.size() >= resource.data.read_by.size()) ||
         (request.resource.data.delivered_to.size() >= resource.data.delivered_to.size())
       );
       allow delete: if isSignedIn() && (
-        // Sender can delete their own message
         request.auth.uid == resource.data.sender_id ||
-        // Or any participant can delete within the chat
         isChatParticipant(resource.data.chat_id)
       );
     }
 
-    // Contacts
-    // Each contact doc contains owner_id: userId
+    // Contacts (owner_id may be profile doc id or auth.uid)
     match /contacts/{contactId} {
-      allow read: if isSignedIn() && resource.data.owner_id == request.auth.uid;
-      allow create: if isSignedIn() && request.resource.data.owner_id == request.auth.uid;
-      allow update, delete: if isSignedIn() && resource.data.owner_id == request.auth.uid;
+      allow read: if isSignedIn() && userIdMatchesAuth(resource.data.owner_id);
+      allow create: if isSignedIn() && userIdMatchesAuth(request.resource.data.owner_id);
+      allow update, delete: if isSignedIn() && userIdMatchesAuth(resource.data.owner_id);
     }
 
     // Typing indicators
-    // Each doc contains chat_id and user_id
     match /typing_indicators/{typingId} {
       allow read: if isSignedIn() && (
         (resource.data.chat_id is string) && isChatParticipant(resource.data.chat_id)
