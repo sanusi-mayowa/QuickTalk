@@ -134,7 +134,7 @@ export default function CreateProfileScreen() {
         setShowCamera(true);
     };
 
-    const getBase64Image = async (uri: string) => {
+    const getBase64Image = async (uri: string | null) => {
         if (!uri) return null;
         if (Platform.OS === "web") return uri; // already base64 on web
         const base64 = await FileSystem.readAsStringAsync(uri, {

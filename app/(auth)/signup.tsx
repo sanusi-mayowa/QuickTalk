@@ -181,7 +181,6 @@ export default function SignupScreen() {
                 placeholder="Enter phone number"
                 defaultCode="US"
                 containerStyle={styles.phoneContainer}
-                keyboardType="numeric"
               />
               {phone.length > 0 && (
                 <Text

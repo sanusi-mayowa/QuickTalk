@@ -456,7 +456,7 @@ export default function ChatScreen() {
         userId: participant.id,
         username: participant.username,
         about: participant.about,
-        profilePicture: participant.profile_picture_url || '',
+        profilePicture: participant.profile_picture_data || '',
         phone: participant.phone,
         isOnline: otherUserPresence?.is_online ? 'true' : 'false',
         lastSeen: otherUserPresence?.last_seen || '',
@@ -608,8 +608,8 @@ export default function ChatScreen() {
         <View style={styles.headerCenter}>
           {/* MODIFIED: Made participant info clickable */}
           <TouchableOpacity style={styles.participantInfo} onPress={handleProfileView}>
-            {participant?.profile_picture_url ? (
-              <Image source={{ uri: participant?.profile_picture_url || '' }} style={styles.headerAvatar} />
+            {participant?.profile_picture_data ? (
+              <Image source={{ uri: participant?.profile_picture_data || '' }} style={styles.headerAvatar} />
             ) : (
               <View style={styles.headerAvatarPlaceholder}>
                 {/* MODIFIED: Show first letter of display name */}

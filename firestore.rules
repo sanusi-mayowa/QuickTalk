@@ -1,0 +1,85 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Helper to check if the authenticated user is a participant in the chat
+    function isChatParticipant(chatId) {
+      return exists(/databases/$(database)/documents/chats/$(chatId)) &&
+        (get(/databases/$(database)/documents/chats/$(chatId)).data.participants.hasAny([request.auth.uid]));
+    }
+
+    // Default: deny everything
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // User Profiles
+    // - Read allowed for signed-in users
+    // - Write allowed only to their own document (doc id == auth.uid)
+    match /user_profiles/{userId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isSignedIn() && userId == request.auth.uid;
+    }
+
+    // Chats
+    // Chat document contains participants: array of userIds (auth.uid values)
+    match /chats/{chatId} {
+      allow read: if isSignedIn() && resource.data.participants.hasAny([request.auth.uid]);
+      allow create: if isSignedIn() && (request.resource.data.participants is list) &&
+        (request.resource.data.participants.hasAny([request.auth.uid]));
+      allow update, delete: if isSignedIn() && resource.data.participants.hasAny([request.auth.uid]);
+    }
+
+    // Messages
+    // Each message has chat_id and sender_id
+    match /messages/{messageId} {
+      allow read: if isSignedIn() && isChatParticipant(resource.data.chat_id);
+      allow create: if isSignedIn() &&
+        (request.resource.data.chat_id is string) &&
+        (request.resource.data.sender_id == request.auth.uid) &&
+        isChatParticipant(request.resource.data.chat_id);
+      // Allow updates limited to read receipts, deliveries, reactions, content edits by sender
+      allow update: if isSignedIn() && isChatParticipant(resource.data.chat_id) && (
+        // Sender can edit content within chat
+        (request.auth.uid == resource.data.sender_id) ||
+        // Any participant may add themselves to read_by or delivered_to arrays
+        (request.resource.data.read_by.size() >= resource.data.read_by.size()) ||
+        (request.resource.data.delivered_to.size() >= resource.data.delivered_to.size())
+      );
+      allow delete: if isSignedIn() && (
+        // Sender can delete their own message
+        request.auth.uid == resource.data.sender_id ||
+        // Or any participant can delete within the chat
+        isChatParticipant(resource.data.chat_id)
+      );
+    }
+
+    // Contacts
+    // Each contact doc contains owner_id: userId
+    match /contacts/{contactId} {
+      allow read: if isSignedIn() && resource.data.owner_id == request.auth.uid;
+      allow create: if isSignedIn() && request.resource.data.owner_id == request.auth.uid;
+      allow update, delete: if isSignedIn() && resource.data.owner_id == request.auth.uid;
+    }
+
+    // Typing indicators
+    // Each doc contains chat_id and user_id
+    match /typing_indicators/{typingId} {
+      allow read: if isSignedIn() && (
+        (resource.data.chat_id is string) && isChatParticipant(resource.data.chat_id)
+      );
+      allow create, update: if isSignedIn() &&
+        (request.resource.data.user_id == request.auth.uid) &&
+        (request.resource.data.chat_id is string) &&
+        isChatParticipant(request.resource.data.chat_id);
+      allow delete: if isSignedIn() && (
+        (resource.data.user_id == request.auth.uid) ||
+        ((resource.data.chat_id is string) && isChatParticipant(resource.data.chat_id))
+      );
+    }
+  }
+}

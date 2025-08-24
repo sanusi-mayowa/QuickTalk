@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { auth, db } from '@/lib/firebase';
-import { addDoc, arrayUnion, collection, doc, getDoc, getDocs, onSnapshot, orderBy, query, serverTimestamp, updateDoc, where } from 'firebase/firestore';
+import { addDoc, arrayUnion, collection, doc, getDoc, getDocs, onSnapshot, orderBy, query, serverTimestamp, updateDoc, where, setDoc, deleteDoc, startAfter } from 'firebase/firestore';
 import { AppState, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -245,11 +245,6 @@ export function useRealtimeChat({ chatId, currentUserId, otherParticipantId }: U
         delivered_to: [],
       });
       const data: any = { id: added.id, ...messageData, created_at: localCreatedAt, read_by: [], delivered_to: [] };
-
-      if (error) {
-        console.error('Supabase error inserting message:', error);
-        throw error;
-      }
       
       console.log('Message inserted successfully:', data);
       
@@ -306,13 +301,16 @@ export function useRealtimeChat({ chatId, currentUserId, otherParticipantId }: U
         if (now - lastTypingRef.current < 1000) return;
         lastTypingRef.current = now;
 
-        await supabase
-          .from('typing_indicators')
-          .upsert({
+        await setDoc(
+          doc(db, 'typing_indicators', `${chatId}_${currentUserId}`),
+          {
             chat_id: chatId,
             user_id: currentUserId,
             is_typing: true,
-          });
+            updated_at: new Date().toISOString(),
+          },
+          { merge: true }
+        );
 
         // Auto-stop typing after 3 seconds
         if (typingTimeoutRef.current) {
@@ -323,11 +321,7 @@ export function useRealtimeChat({ chatId, currentUserId, otherParticipantId }: U
           sendTypingIndicator(false);
         }, 3000);
       } else {
-        await supabase
-          .from('typing_indicators')
-          .delete()
-          .eq('chat_id', chatId)
-          .eq('user_id', currentUserId);
+        await deleteDoc(doc(db, 'typing_indicators', `${chatId}_${currentUserId}`));
 
         if (typingTimeoutRef.current) {
           clearTimeout(typingTimeoutRef.current);
@@ -486,11 +480,14 @@ export function useRealtimeChat({ chatId, currentUserId, otherParticipantId }: U
       const queued = await getQueuedMessages();
       for (const q of queued.filter(q => q.chat_id === chatId)) {
         try {
-          await supabase.from('messages').insert({
+          const addedRef = await addDoc(collection(db, 'messages'), {
             chat_id: q.chat_id,
             sender_id: q.sender_id,
             content: q.content,
             message_type: q.message_type,
+            created_at: new Date().toISOString(),
+            read_by: [],
+            delivered_to: [],
           });
           await removeFromQueueByClientId(q.client_id || q.id);
         } catch {}
@@ -508,14 +505,16 @@ export function useRealtimeChat({ chatId, currentUserId, otherParticipantId }: U
           ? messages[messages.length - 1].created_at
           : lastFetchedAtRef.current || '1970-01-01T00:00:00.000Z';
 
-        const { data, error } = await supabase
-          .from('messages')
-          .select('*')
-          .eq('chat_id', chatId)
-          .gt('created_at', lastLocal)
-          .order('created_at', { ascending: true });
+        const qLatest = query(
+          collection(db, 'messages'),
+          where('chat_id', '==', chatId),
+          orderBy('created_at', 'asc'),
+          startAfter(lastLocal)
+        );
+        const snap = await getDocs(qLatest);
+        const data = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })) as Message[];
 
-        if (!error && data && data.length > 0) {
+        if (data && data.length > 0) {
           setMessages(prev => {
             const merged = [...prev];
             for (const msg of data as Message[]) {
@@ -540,18 +539,22 @@ export function useRealtimeChat({ chatId, currentUserId, otherParticipantId }: U
       const queued = await getQueuedMessages();
       for (const q of queued.filter(q => q.chat_id === chatId)) {
         try {
-          const { data, error } = await supabase.from('messages').insert({
+          const addedRef = await addDoc(collection(db, 'messages'), {
             chat_id: q.chat_id,
             sender_id: q.sender_id,
             content: q.content,
             message_type: q.message_type,
-          }).select().single();
-          if (!error && data) {
+            created_at: new Date().toISOString(),
+            read_by: [],
+            delivered_to: [],
+          });
+          if (addedRef && addedRef.id) {
             // Replace local queued message with server one
-            setMessages(prev => prev.map(m => (m.client_id && (m.client_id === (q.client_id || q.id))) ? { ...data, client_id: m.client_id, status: 'sent' } as Message : m));
+            setMessages(prev => prev.map(m => (m.client_id && (m.client_id === (q.client_id || q.id))) ? { ...q, id: addedRef.id, status: 'sent' } as Message : m));
             await removeFromQueueByClientId(q.client_id || q.id);
             // Refresh cache
-            const { data: fresh } = await supabase.from('messages').select('*').eq('chat_id', chatId).order('created_at', { ascending: true });
+            const freshSnap = await getDocs(query(collection(db, 'messages'), where('chat_id', '==', chatId), orderBy('created_at', 'asc')));
+            const fresh = freshSnap.docs.map(d => d.data()) as Message[];
             if (fresh) saveMessagesToCache(fresh as Message[]);
           }
         } catch {}

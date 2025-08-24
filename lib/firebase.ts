@@ -2,7 +2,7 @@ import { Platform } from 'react-native';
 import { initializeApp, getApps, getApp, type FirebaseApp, type FirebaseOptions } from 'firebase/app';
 import { getFirestore, type Firestore } from 'firebase/firestore';
 import { getStorage, type FirebaseStorage } from 'firebase/storage';
-import { getAuth, initializeAuth, type Auth, getReactNativePersistence } from 'firebase/auth';
+import { getAuth, initializeAuth, type Auth } from 'firebase/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Your Firebase config is now here instead of app.json
@@ -27,9 +27,29 @@ function createAuth(app: FirebaseApp): Auth {
   if (Platform.OS === 'web') {
     return getAuth(app);
   }
-  return initializeAuth(app, {
-    persistence: getReactNativePersistence(AsyncStorage),
-  });
+  // Runtime-resolve getReactNativePersistence for compatibility across SDK versions
+  let getReactNativePersistence: ((storage: any) => any) | null = null;
+  try {
+    // Newer SDKs may expose react-native path
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    getReactNativePersistence = require('firebase/auth/react-native').getReactNativePersistence;
+  } catch {}
+  if (!getReactNativePersistence) {
+    try {
+      // Fallback to main auth export if available
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      getReactNativePersistence = require('firebase/auth').getReactNativePersistence;
+    } catch {}
+  }
+  if (getReactNativePersistence) {
+    return initializeAuth(app, {
+      // Cast to any to avoid type mismatch across SDK minors
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      persistence: (getReactNativePersistence as any)(AsyncStorage),
+    } as any);
+  }
+  // Fallback: return default auth if persistence helper unavailable
+  return getAuth(app);
 }
 
 const app = createFirebaseApp();

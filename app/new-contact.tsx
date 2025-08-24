@@ -14,7 +14,7 @@ import Toast from "react-native-toast-message";
 import { auth, db } from "@/lib/firebase";
 import { addDoc, collection, getDocs, query, where } from "firebase/firestore";
 import PhoneInput from "@/components/PhoneInput";
-import { parsePhoneNumberFromString } from "libphonenumber-js/core";
+import { parsePhoneNumberFromString } from "libphonenumber-js";
 
 export default function NewContactScreen() {
   const router = useRouter();

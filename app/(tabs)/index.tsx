@@ -27,7 +27,7 @@ interface Chat {
     id: string;
     username: string;
     about: string;
-    profile_picture_url: string | null;
+    profile_picture_data: string | null;
     phone: string;
     is_online?: boolean;
     last_seen?: string;
@@ -56,7 +56,7 @@ interface UserProfile {
   id: string;
   username: string;
   about: string;
-  profile_picture_url: string | null;
+  profile_picture_data: string | null;
   phone: string;
   email: string;
 }
@@ -533,8 +533,8 @@ export default function HomeScreen() {
   const renderChatItem = ({ item }: { item: Chat }) => (
     <TouchableOpacity style={styles.chatItem} onPress={() => handleChatPress(item)}>
       <View style={styles.avatarContainer}>
-        {item.participant.profile_picture_url ? (
-          <Image source={{ uri: item.participant.profile_picture_url }} style={styles.avatar} />
+        {item.participant.profile_picture_data ? (
+          <Image source={{ uri: item.participant.profile_picture_data }} style={styles.avatar} />
         ) : (
           <View style={styles.avatarPlaceholder}>
             <Feather name="user" size={24} color="#666" />

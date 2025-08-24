@@ -40,7 +40,7 @@ interface Contact {
     id: string;
     username: string;
     about: string;
-    profile_picture_url: string | null;
+    profile_picture_data: string | null;
   } | null;
   created_at: string;
 }
@@ -178,7 +178,7 @@ export default function ContactsScreen() {
               id: linked.id,
               username: linked.username,
               about: linked.about,
-              profile_picture_url: linked.profile_picture_url,
+              profile_picture_data: linked.profile_picture_data,
             }
             : null,
         });
@@ -394,7 +394,7 @@ export default function ContactsScreen() {
     }
 
     const isQuickTalkUser = !!item.contact?.is_quicktalk_user || !!item.contact?.contact_user;
-    const profilePicture = item.contact?.contact_user?.profile_picture_url;
+    const profilePicture = item.contact?.contact_user?.profile_picture_data;
 
     return (
       <TouchableOpacity
