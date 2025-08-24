@@ -14,12 +14,13 @@ import {
 import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import { Feather } from "@expo/vector-icons";
-import { auth, db, storage } from "@/lib/firebase";
+import { auth, db } from "@/lib/firebase";
 import { doc, getDoc, setDoc } from "firebase/firestore";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import Toast from "react-native-toast-message";
 import * as ImagePicker from "expo-image-picker";
 import { CameraView, useCameraPermissions } from "expo-camera";
+import * as FileSystem from "expo-file-system";
+import * as ImageManipulator from "expo-image-manipulator";
 
 const PRESET_ABOUTS = [
     "Love to travel and explore new places ✈️",
@@ -44,29 +45,27 @@ export default function CreateProfileScreen() {
     const [userEmail, setUserEmail] = useState("");
     const [showCamera, setShowCamera] = useState(false);
     const [cameraPermission, requestCameraPermission] = useCameraPermissions();
-    const cameraRef = useRef(null);
+    const cameraRef = useRef<any>(null);
 
     useEffect(() => {
         loadUserData();
     }, []);
-
 
     const loadUserData = async () => {
         try {
             const user = auth.currentUser;
             if (user) {
                 setUserEmail(user.email || "");
-                setUserPhone(user.phoneNumber || ""); // get phone from Firebase Auth if available
+                setUserPhone(user.phoneNumber || "");
 
-                // fetch Firestore profile
                 const docRef = doc(db, "user_profiles", user.uid);
                 const snap = await getDoc(docRef);
                 if (snap.exists()) {
                     const profile = snap.data() as any;
                     setUsername(profile.username || "");
                     setAbout(profile.about || "");
-                    setProfileImage(profile.profile_picture_url || null);
-                    setUserPhone(profile.phone || user.phoneNumber || ""); // use Firestore phone if available, else Auth
+                    setProfileImage(profile.profile_picture_data || null);
+                    setUserPhone(profile.phone || user.phoneNumber || "");
                 }
             }
         } catch (error) {
@@ -95,11 +94,17 @@ export default function CreateProfileScreen() {
                 mediaTypes: ImagePicker.MediaTypeOptions.Images,
                 allowsEditing: true,
                 aspect: [1, 1],
-                quality: 0.8,
+                quality: 0.7,
             });
 
             if (!result.canceled) {
-                setProfileImage(result.assets[0].uri);
+                // Resize before saving
+                const resized = await ImageManipulator.manipulateAsync(
+                    result.assets[0].uri,
+                    [{ resize: { width: 800 } }],
+                    { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }
+                );
+                setProfileImage(resized.uri);
             }
         }
     };
@@ -129,6 +134,15 @@ export default function CreateProfileScreen() {
         setShowCamera(true);
     };
 
+    const getBase64Image = async (uri: string) => {
+        if (!uri) return null;
+        if (Platform.OS === "web") return uri; // already base64 on web
+        const base64 = await FileSystem.readAsStringAsync(uri, {
+            encoding: FileSystem.EncodingType.Base64,
+        });
+        return `data:image/jpeg;base64,${base64}`;
+    };
+
     const handleCreateProfile = async () => {
         if (!username.trim()) {
             Toast.show({ type: "error", text1: "Username Required", text2: "Please enter a username" });
@@ -137,7 +151,11 @@ export default function CreateProfileScreen() {
 
         const finalAbout = useCustomAbout ? customAbout.trim() : about;
         if (!finalAbout) {
-            Toast.show({ type: "error", text1: "About Required", text2: "Please select or write something about yourself" });
+            Toast.show({
+                type: "error",
+                text1: "About Required",
+                text2: "Please select or write something about yourself",
+            });
             return;
         }
 
@@ -147,23 +165,13 @@ export default function CreateProfileScreen() {
             const user = auth.currentUser;
             if (!user) throw new Error("No active session");
 
-            let profileImageUrl = profileImage;
+            const profileImageData = await getBase64Image(profileImage);
 
-            // Upload to Firebase Storage if local image
-            if (profileImage && profileImage.startsWith("file")) {
-                const response = await fetch(profileImage);
-                const blob = await response.blob();
-                const storageRef = ref(storage, `profile_pictures/${user.uid}.jpg`);
-                await uploadBytes(storageRef, blob);
-                profileImageUrl = await getDownloadURL(storageRef);
-            }
-
-            //  Save profile with UID as docId
             const profileData = {
                 auth_user_id: user.uid,
                 username: username.trim(),
                 about: finalAbout,
-                profile_picture_url: profileImageUrl || null,
+                profile_picture_data: profileImageData,
                 phone: userPhone,
                 email: userEmail,
                 is_profile_complete: true,
@@ -173,12 +181,20 @@ export default function CreateProfileScreen() {
             const docRef = doc(db, "user_profiles", user.uid);
             await setDoc(docRef, profileData, { merge: true });
 
-            Toast.show({ type: "success", text1: "Profile Saved!", text2: "Your profile has been updated successfully" });
+            Toast.show({
+                type: "success",
+                text1: "Profile Saved!",
+                text2: "Your profile has been updated successfully",
+            });
 
             router.replace("/(tabs)");
         } catch (error: any) {
             console.error("Error creating profile:", error);
-            Toast.show({ type: "error", text1: "Profile Creation Failed", text2: error.message || "Something went wrong" });
+            Toast.show({
+                type: "error",
+                text1: "Profile Creation Failed",
+                text2: error.message || "Something went wrong",
+            });
         } finally {
             setLoading(false);
         }
@@ -198,7 +214,13 @@ export default function CreateProfileScreen() {
                             onPress={async () => {
                                 if (cameraRef.current) {
                                     const photo = await cameraRef.current.takePictureAsync();
-                                    setProfileImage(photo.uri);
+                                    // resize before saving
+                                    const resized = await ImageManipulator.manipulateAsync(
+                                        photo.uri,
+                                        [{ resize: { width: 800 } }],
+                                        { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }
+                                    );
+                                    setProfileImage(resized.uri);
                                     setShowCamera(false);
                                 }
                             }}
@@ -214,11 +236,12 @@ export default function CreateProfileScreen() {
     return (
         <View style={styles.container}>
             <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
-                <ScrollView contentContainerStyle={styles.scrollContent}>
+                    
                     <View style={styles.header}>
                         <Text style={styles.title}>Create Your Profile</Text>
                         <Text style={styles.subtitle}>Let others know who you are</Text>
                     </View>
+                <ScrollView contentContainerStyle={styles.scrollContent}>
 
                     {/* Profile Picture Section */}
                     <View style={styles.profileImageSection}>
@@ -337,42 +360,45 @@ export default function CreateProfileScreen() {
 }
 
 const styles = StyleSheet.create({
-    container: { 
-        flex: 1, 
-        backgroundColor: "#f8f9fa" 
+    container: {
+        flex: 1,
+        backgroundColor: "#f8f9fa",
+        zIndex: 1000,
+        paddingBottom: 30,
     },
-    scrollContent: { 
-        padding: 20, 
-        paddingTop: 60 
+    scrollContent: {
+        padding: 20,
+        paddingTop: 10
     },
     header: {
-         alignItems: "center", 
-         marginBottom: 30 
-        },
-    title: { 
-        fontSize: 28, 
-        fontWeight: "700", 
-        color: "#3A805B", 
-        marginBottom: 8 
+        alignItems: "center",
+        marginBottom: 30,
+        paddingTop: 40,
     },
-    subtitle: { 
-        fontSize: 16, 
-        color: "#666", 
-        textAlign: "center" 
+    title: {
+        fontSize: 28,
+        fontWeight: "700",
+        color: "#3A805B",
+        marginBottom: 8
     },
-    profileImageSection: { 
-        alignItems: "center", 
-        marginBottom: 30 
+    subtitle: {
+        fontSize: 16,
+        color: "#666",
+        textAlign: "center"
     },
-    profileImageContainer: { 
-        marginBottom: 16 
+    profileImageSection: {
+        alignItems: "center",
+        marginBottom: 30
     },
-    profileImage: { 
-        width: 120, 
-        height: 120, 
-        borderRadius: 60, 
-        borderWidth: 4, 
-        borderColor: "#3A805B" 
+    profileImageContainer: {
+        marginBottom: 16
+    },
+    profileImage: {
+        width: 120,
+        height: 120,
+        borderRadius: 60,
+        borderWidth: 4,
+        borderColor: "#3A805B"
     },
     profileImagePlaceholder: {
         width: 120,
@@ -385,9 +411,10 @@ const styles = StyleSheet.create({
         borderColor: "#dee2e6",
         borderStyle: "dashed",
     },
-    imageButtons: { 
-        flexDirection: "row", 
-        gap: 12 },
+    imageButtons: {
+        flexDirection: "row",
+        gap: 12
+    },
     imageButton: {
         flexDirection: "row",
         alignItems: "center",
@@ -399,164 +426,165 @@ const styles = StyleSheet.create({
         borderColor: "#3A805B",
         gap: 6,
     },
-    imageButtonText: { 
-        color: "#3A805B", 
-        fontSize: 14, 
-        fontWeight: "600" 
+    imageButtonText: {
+        color: "#3A805B",
+        fontSize: 14,
+        fontWeight: "600"
     },
-    inputSection: { marginBottom: 24 
+    inputSection: {
+        marginBottom: 24
     },
-    label: { 
-        fontSize: 16, 
-        fontWeight: "600", 
-        color: "#333", 
-        marginBottom: 8 
+    label: {
+        fontSize: 16,
+        fontWeight: "600",
+        color: "#333",
+        marginBottom: 8
     },
-    textInput: { 
-        backgroundColor: "#fff", 
-        borderRadius: 12, 
-        padding: 16, 
-        fontSize: 16, 
-        borderWidth: 1, 
-        borderColor: "#e9ecef" 
+    textInput: {
+        backgroundColor: "#fff",
+        borderRadius: 12,
+        padding: 16,
+        fontSize: 16,
+        borderWidth: 1,
+        borderColor: "#e9ecef"
     },
-    textArea: { 
-        height: 100, 
-        textAlignVertical: "top" 
+    textArea: {
+        height: 100,
+        textAlignVertical: "top"
     },
-    aboutToggle: { 
-        flexDirection: "row", 
-        backgroundColor: "#e9ecef", 
-        borderRadius: 8, 
-        padding: 4, 
-        marginBottom: 16 
+    aboutToggle: {
+        flexDirection: "row",
+        backgroundColor: "#e9ecef",
+        borderRadius: 8,
+        padding: 4,
+        marginBottom: 16
     },
-    toggleButton: { 
-        flex: 1, 
-        paddingVertical: 8, 
-        paddingHorizontal: 12, 
-        borderRadius: 6, 
-        alignItems: "center" 
+    toggleButton: {
+        flex: 1,
+        paddingVertical: 8,
+        paddingHorizontal: 12,
+        borderRadius: 6,
+        alignItems: "center"
     },
-    toggleButtonActive: { 
-        backgroundColor: "#3A805B" 
+    toggleButtonActive: {
+        backgroundColor: "#3A805B"
     },
-    toggleButtonText: { 
-        fontSize: 14, 
-        color: "#666", 
-        fontWeight: "500" 
+    toggleButtonText: {
+        fontSize: 14,
+        color: "#666",
+        fontWeight: "500"
     },
-    toggleButtonTextActive: { 
-        color: "#fff" 
+    toggleButtonTextActive: {
+        color: "#fff"
     },
-    presetContainer: { 
-        gap: 8 
+    presetContainer: {
+        gap: 8
     },
-    presetOption: { 
-        backgroundColor: "#fff", 
-        padding: 16, 
-        borderRadius: 12, 
-        borderWidth: 1, 
-        borderColor: "#e9ecef" 
+    presetOption: {
+        backgroundColor: "#fff",
+        padding: 16,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: "#e9ecef"
     },
-    presetOptionSelected: { 
-        borderColor: "#3A805B", 
-        backgroundColor: "#f8fffe" 
+    presetOptionSelected: {
+        borderColor: "#3A805B",
+        backgroundColor: "#f8fffe"
     },
-    presetText: { 
-        fontSize: 15, 
-        color: "#333" 
+    presetText: {
+        fontSize: 15,
+        color: "#333"
     },
-    presetTextSelected: { 
-        color: "#3A805B", 
-        fontWeight: "500" 
+    presetTextSelected: {
+        color: "#3A805B",
+        fontWeight: "500"
     },
-    contactSection: { 
-        backgroundColor: "#fff", 
-        borderRadius: 12, 
-        padding: 20, 
-        marginBottom: 30, 
-        borderWidth: 1, 
-        borderColor: "#e9ecef" 
+    contactSection: {
+        backgroundColor: "#fff",
+        borderRadius: 12,
+        padding: 20,
+        marginBottom: 30,
+        borderWidth: 1,
+        borderColor: "#e9ecef"
     },
-    sectionTitle: { 
-        fontSize: 18, 
-        fontWeight: "600", 
-        color: "#333", 
-        marginBottom: 16 
+    sectionTitle: {
+        fontSize: 18,
+        fontWeight: "600",
+        color: "#333",
+        marginBottom: 16
     },
-    contactItem: { 
-        flexDirection: "row", 
-        justifyContent: "space-between", 
-        alignItems: "center", 
-        paddingVertical: 8 
+    contactItem: {
+        flexDirection: "row",
+        justifyContent: "space-between",
+        alignItems: "center",
+        paddingVertical: 8
     },
-    contactLabel: { 
-        fontSize: 14, 
-        color: "#666", 
-        fontWeight: "500" 
+    contactLabel: {
+        fontSize: 14,
+        color: "#666",
+        fontWeight: "500"
     },
-    contactValue: { 
-        fontSize: 14, 
-        color: "#333", 
-        fontWeight: "600" 
+    contactValue: {
+        fontSize: 14,
+        color: "#333",
+        fontWeight: "600"
     },
-    createButton: { 
-        borderRadius: 25, 
-        overflow: "hidden", 
-        marginBottom: 20 
+    createButton: {
+        borderRadius: 25,
+        overflow: "hidden",
+        marginBottom: 20
     },
-    createButtonDisabled: { 
-        opacity: 0.7 
+    createButtonDisabled: {
+        opacity: 0.7
     },
-    createButtonGradient: { 
-        paddingVertical: 16, 
-        alignItems: "center", 
-        justifyContent: "center" 
+    createButtonGradient: {
+        paddingVertical: 16,
+        alignItems: "center",
+        justifyContent: "center"
     },
-    createButtonText: { 
-        color: "#fff", 
-        fontSize: 16, 
-        fontWeight: "700" 
+    createButtonText: {
+        color: "#fff",
+        fontSize: 16,
+        fontWeight: "700"
     },
-    cameraContainer: { 
-        flex: 1 
+    cameraContainer: {
+        flex: 1
     },
-    camera: { 
-        flex: 1 
+    camera: {
+        flex: 1
     },
-    cameraControls: { 
-        flex: 1, 
+    cameraControls: {
+        flex: 1,
         backgroundColor: "transparent",
-        flexDirection: "row", 
-        justifyContent: "space-between", 
-        alignItems: "flex-end", 
-        padding: 20, 
-        marginBottom: 20 
+        flexDirection: "row",
+        justifyContent: "space-between",
+        alignItems: "flex-end",
+        padding: 20,
+        paddingBottom: 80,
     },
-    cancelButton: { 
-        backgroundColor: "rgba(0,0,0,0.5)", 
-        paddingHorizontal: 20, 
-        paddingVertical: 10, 
-        borderRadius: 20 
+    cancelButton: {
+        backgroundColor: "rgba(0,0,0,0.5)",
+        paddingHorizontal: 20,
+        paddingVertical: 10,
+        borderRadius: 20
     },
-    cancelButtonText: { 
-    
-        color: "#fff", 
-        fontSize: 16 
+    cancelButtonText: {
+
+        color: "#fff",
+        fontSize: 16
     },
-    captureButton: { 
-        width: 70, 
-        height: 70, 
-        borderRadius: 35, 
-        backgroundColor: "rgba(255,255,255,0.3)", 
-        justifyContent: "center", 
-        alignItems: "center" 
+    captureButton: {
+        width: 70,
+        height: 70,
+        borderRadius: 35,
+        backgroundColor: "rgba(255,255,255,0.3)",
+        justifyContent: "center",
+        alignItems: "center"
     },
-    captureButtonInner: { 
-        width: 50, 
-        height: 50, 
-        borderRadius: 25, 
-        backgroundColor: "#fff" 
+    captureButtonInner: {
+        width: 50,
+        height: 50,
+        borderRadius: 25,
+        backgroundColor: "#fff"
     },
 });
