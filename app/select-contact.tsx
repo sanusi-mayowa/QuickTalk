@@ -40,7 +40,7 @@ interface Contact {
     id: string;
     username: string;
     about: string;
-    profile_picture_url: string | null;
+    profile_picture_data: string | null;
   } | null;
   created_at: string;
 }
@@ -178,7 +178,7 @@ export default function ContactsScreen() {
               id: linked.id,
               username: linked.username,
               about: linked.about,
-              profile_picture_url: linked.profile_picture_url,
+              profile_picture_data: linked.profile_picture_data,
             }
             : null,
         });
@@ -364,18 +364,25 @@ export default function ContactsScreen() {
       });
     }
   };
-
-
-
+  
   const handleContactPress = (contactOption: ContactOption) => {
     if (contactOption.type === "action" && contactOption.action) {
       contactOption.action();
     } else if (contactOption.type === "contact" && contactOption.contact) {
-      //  Open details screen instead of chat
-      router.push({
-        pathname: "/user-profile",
-        params: { id: contactOption.contact.id },
-      });
+      const quicktalkId = contactOption.contact.contact_user_id;
+      if (quicktalkId) {
+        // ✅ Use the QuickTalk user profile ID, not contact doc id
+        router.push({
+          pathname: "/user-profile",
+          params: { id: quicktalkId },
+        });
+      } else {
+        Toast.show({
+          type: "info",
+          text1: "Not on QuickTalk",
+          text2: `${contactOption.contact.first_name} is not using QuickTalk yet`,
+        });
+      }
     }
   };
 
@@ -384,8 +391,8 @@ export default function ContactsScreen() {
     router.push('/new-contact');
   };
 
-  const renderContactItem = ({ item }: { item: ContactOption }) => {
-    if (item.type === 'section') {
+const renderContactItem = ({ item }: { item: ContactOption }) => {
+    if (item.type === "section") {
       return (
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>{item.title}</Text>
@@ -393,27 +400,32 @@ export default function ContactsScreen() {
       );
     }
 
+
     const isQuickTalkUser = !!item.contact?.is_quicktalk_user || !!item.contact?.contact_user;
-    const profilePicture = item.contact?.contact_user?.profile_picture_url;
+    const profilePicture = item.contact?.contact_user?.profile_picture_data;
 
     return (
       <TouchableOpacity
         style={[
           styles.contactItem,
-          item.type === 'contact' && !isQuickTalkUser && { opacity: 0.5 } // 🔹 Dim non-QuickTalk contacts
+          item.type === 'contact' && !isQuickTalkUser && { opacity: 0.5 } //  Dim non-QuickTalk contacts
         ]}
         onPress={() => {
           if (item.type === "action" && item.action) {
             item.action();
           } else if (item.type === "contact" && item.contact && isQuickTalkUser) {
-            // 🔹 Only open profile if QuickTalk user
-            router.push({
-              pathname: "/user-profile",
-              params: { id: item.contact.id },
-            });
+            const quicktalkId = item.contact.contact_user_id;
+            if (quicktalkId) {
+              
+            // ✅ Use QuickTalk profile ID for /user-profile
+              router.push({
+                pathname: "/user-profile",
+                params: { id: quicktalkId },
+              });
+            }
           }
         }}
-        disabled={item.type === 'contact' && !isQuickTalkUser} // 🔹 disable press for non-QuickTalk contacts
+        disabled={item.type === 'contact' && !isQuickTalkUser} //  disable press for non-QuickTalk contacts
       >
         <View
           style={[
