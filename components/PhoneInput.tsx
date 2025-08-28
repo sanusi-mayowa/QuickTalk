@@ -98,6 +98,37 @@ export default function PhoneInput({
   const [showCountryPicker, setShowCountryPicker] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
+  // Sync selected country when defaultCode prop changes
+  useEffect(() => {
+    const next = COUNTRIES.find((c) => c.code === defaultCode);
+    if (next && next.code !== selectedCountry.code) {
+      setSelectedCountry(next);
+    }
+  }, [defaultCode]);
+
+  // Ensure the text input contains only the national number (strip any dial code)
+  useEffect(() => {
+    if (!value) return;
+    const startsWithPlus = value.startsWith('+');
+    const currentDial = selectedCountry.dialCode; // e.g. +234
+    let stripped = value;
+    if (startsWithPlus) {
+      // Remove any known country dial code prefix
+      const sorted = [...COUNTRIES].sort((a, b) => b.dialCode.length - a.dialCode.length);
+      const match = sorted.find(c => value.startsWith(c.dialCode));
+      if (match) {
+        stripped = value.slice(match.dialCode.length);
+      } else {
+        stripped = value.replace(/^\+/, '');
+      }
+    } else if (value.startsWith(currentDial)) {
+      stripped = value.slice(currentDial.length);
+    }
+    if (stripped !== value) {
+      onChangeText(stripped);
+    }
+  }, [selectedCountry]);
+
   useEffect(() => {
     if (value) {
       const formattedNumber = `${selectedCountry.dialCode}${value}`;

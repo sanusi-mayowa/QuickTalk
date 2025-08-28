@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -12,681 +12,784 @@ import {
   Pressable,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
+import { AppState } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { auth, db } from '@/lib/firebase';
+import { auth, db, FirebaseService } from '@/lib/firebase';
 import { collection, doc, getDoc, getDocs, onSnapshot, orderBy, query, where, limit } from 'firebase/firestore';
 import Toast from 'react-native-toast-message';
 import { Feather } from '@expo/vector-icons';
 import { TypingUser } from '@/hooks/useRealtimeChat';
 
+// Prefetch helper for expo-router
+const useRoutePrefetch = (router: any) => {
+  const prefetch = useCallback((path: string) => {
+    try { router?.prefetch?.(path); } catch {}
+  }, [router]);
+  return prefetch;
+};
 
-// interface Chat {
-//   id: string;
-//   participant: {
-//     id: string;
-//     username: string;
-//     about: string;
-//     profile_picture_url: string | null;
-//     phone: string;
-//     is_online?: boolean;
-//     last_seen?: string;
-//   };
-//   lastMessage: string;
-//   lastMessageTime: string;
-//   lastMessageId: string;
-//   lastMessageSenderId: string;
-//   lastMessageStatus?: {
-//     isRead: boolean;
-//     isDelivered: boolean;
-//     isSent: boolean;
-//   };
-//   lastMessageReactions?: Record<string, string>;
-//   unreadCount: number;
-//   hasUnreadMessages?: boolean;
-//   // ADDED: Contact information for display names
-//   contactInfo?: {
-//     first_name: string;
-//     last_name?: string;
-//     is_saved: boolean;
-//   };
-// }
+interface Chat {
+  id: string;
+  participant: {
+    id: string;
+    username: string;
+    about: string;
+    profile_picture_url: string | null;
+    phone: string;
+    is_online?: boolean;
+    last_seen?: string;
+  };
+  lastMessage: string;
+  lastMessageTime: string;
+  lastMessageId: string;
+  lastMessageSenderId: string;
+  lastMessageStatus?: {
+    isRead: boolean;
+    isDelivered: boolean;
+    isSent: boolean;
+  };
+  lastMessageReactions?: Record<string, string>;
+  unreadCount: number;
+  hasUnreadMessages?: boolean;
+  // ADDED: Contact information for display names
+  contactInfo?: {
+    first_name: string;
+    last_name?: string;
+    is_saved: boolean;
+  };
+}
 
-// interface UserProfile {
-//   id: string;
-//   username: string;
-//   about: string;
-//   profile_picture_url: string | null;
-//   phone: string;
-//   email: string;
-// }
+interface UserProfile {
+  id: string;
+  username: string;
+  about: string;
+  profile_picture_url: string | null;
+  phone: string;
+  email: string;
+}
 
-// export default function HomeScreen() {
-//   const router = useRouter();
-//   const insets = useSafeAreaInsets();
-//   const [chats, setChats] = useState<Chat[]>([]);
-//   const [searchQuery, setSearchQuery] = useState('');
-//   const [showSearchBar, setShowSearchBar] = useState(false);
-//   const [loading, setLoading] = useState(true);
-//   const [refreshing, setRefreshing] = useState(false);
-//   const [menuVisible, setMenuVisible] = useState(false);
-//   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
-//   const [realtimeChannel, setRealtimeChannel] = useState<any>(null);
-//   // ADDED: State for tracking typing users across all chats
-//   const [typingUsers, setTypingUsers] = useState<Record<string, TypingUser[]>>({});
-//   // ADDED: State for tracking message subscriptions per chat
-//   const [messageChannels, setMessageChannels] = useState<Record<string, any>>({});
-//   // ADDED: Offline flag for UI presence indicators
-//   const [isOffline, setIsOffline] = useState(false);
+export default function HomeScreen() {
+  const router = useRouter();
+  const prefetch = useRoutePrefetch(router);
+  const insets = useSafeAreaInsets();
+  const [chats, setChats] = useState<Chat[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showSearchBar, setShowSearchBar] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [menuVisible, setMenuVisible] = useState(false);
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+  const [realtimeChannel, setRealtimeChannel] = useState<any>(null);
+  const [contactsRealtimeChannel, setContactsRealtimeChannel] = useState<any>(null);
+  // ADDED: State for tracking typing users across all chats
+  const [typingUsers, setTypingUsers] = useState<Record<string, TypingUser[]>>({});
+  // ADDED: State for tracking message subscriptions per chat
+  const [messageChannels, setMessageChannels] = useState<Record<string, any>>({});
+  // ADDED: Offline flag for UI presence indicators
+  const [isOffline, setIsOffline] = useState(false);
+  const appStateRef = useRef<string>(AppState.currentState);
 
-//   // Load chats when screen comes into focus
-//   useFocusEffect(
-//     useCallback(() => {
-//       loadCurrentUser();
-//       // Try to show cached chats immediately while loading fresh data
-//       (async () => {
-//         try {
-//           const user = auth.currentUser;
-//           if (user) {
-//             const q = query(collection(db, 'user_profiles'), where('auth_user_id', '==', user.uid));
-//             const snap = await getDocs(q);
-//             const currentUserProfile = snap.docs[0]?.data() as any | undefined;
-//             if (currentUserProfile) {
-//               const cached = await AsyncStorage.getItem(`cache:chats:${currentUserProfile.id}`);
-//               if (cached) {
-//                 const parsed = JSON.parse(cached);
-//                 if (Array.isArray(parsed)) setChats(parsed);
-//               }
-//             }
-//           }
-//         } catch {}
-//       })();
-//       loadChats();
-//       setupRealtimeSubscription();
+  // Load chats when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      loadCurrentUser();
+      // Try to show cached chats immediately while loading fresh data
+      (async () => {
+        try {
+          const user = auth.currentUser;
+          if (user) {
+            const q = query(collection(db, 'user_profiles'), where('auth_user_id', '==', user.uid));
+            const snap = await getDocs(q);
+            const currentUserProfile = snap.docs[0]?.data() as any | undefined;
+            if (currentUserProfile) {
+              const cached = await AsyncStorage.getItem(`cache:chats:${currentUserProfile.id}`);
+              if (cached) {
+                const parsed = JSON.parse(cached);
+                if (Array.isArray(parsed)) setChats(parsed);
+              }
+            }
+          }
+        } catch {}
+      })();
+      loadChats();
+      setupRealtimeSubscription();
       
-//       return () => {
-//         // Cleanup subscription when screen loses focus
-//         if (realtimeChannel && typeof realtimeChannel === 'function') {
-//           realtimeChannel();
-//           setRealtimeChannel(null);
-//         }
-//         Object.values(messageChannels).forEach(unsub => {
-//           if (typeof unsub === 'function') unsub();
-//         });
-//         setMessageChannels({});
-//       };
-//     }, [])
-//   );
+      return () => {
+        // Cleanup subscription when screen loses focus
+        if (realtimeChannel && typeof realtimeChannel === 'function') {
+          realtimeChannel();
+          setRealtimeChannel(null);
+        }
+        Object.values(messageChannels).forEach(unsub => {
+          if (typeof unsub === 'function') unsub();
+        });
+        setMessageChannels({});
+      };
+    }, [])
+  );
 
-//   const loadCurrentUser = async () => {
-//     try {
-//       const user = auth.currentUser;
-//       if (!user) return;
-//       const q = query(collection(db, 'user_profiles'), where('auth_user_id', '==', user.uid));
-//       const snap = await getDocs(q);
-//       const profile = snap.docs[0]?.data() as any | undefined;
-//       if (profile) setCurrentUser(profile as any);
-//     } catch (error) {
-//       console.error('Error loading current user:', error);
-//     }
-//   };
+  const loadCurrentUser = async () => {
+    try {
+      const user = auth.currentUser;
+      if (!user) return;
+      const q = query(collection(db, 'user_profiles'), where('auth_user_id', '==', user.uid));
+      const snap = await getDocs(q);
+      const profile = snap.docs[0]?.data() as any | undefined;
+      if (profile) setCurrentUser(profile as any);
+    } catch (error) {
+      console.error('Error loading current user:', error);
+    }
+  };
 
-//   // ADDED: Function to setup message subscriptions for each chat
-//   const setupMessageSubscriptions = useCallback(async (chatList: Chat[]) => {
-//     try {
-//       const user = auth.currentUser;
-//       if (!user) return;
+  // ADDED: Function to setup message subscriptions for each chat
+  const setupMessageSubscriptions = useCallback(async (chatList: Chat[]) => {
+    try {
+      const user = auth.currentUser;
+      if (!user) return;
 
-//       let userProfile = currentUser;
-//       if (!userProfile) {
-//         const qUser = query(collection(db, 'user_profiles'), where('auth_user_id', '==', user.uid));
-//         const snapUser = await getDocs(qUser);
-//         userProfile = snapUser.docs[0]?.data() as any;
-//         if (!userProfile) return;
-//       }
+      let userProfile = currentUser;
+      if (!userProfile) {
+        const qUser = query(collection(db, 'user_profiles'), where('auth_user_id', '==', user.uid));
+        const snapUser = await getDocs(qUser);
+        userProfile = snapUser.docs[0]?.data() as any;
+        if (!userProfile) return;
+        (userProfile as any).id = snapUser.docs[0]?.id;
+      }
 
-//       Object.values(messageChannels).forEach(unsub => { if (typeof unsub === 'function') unsub(); });
+      Object.values(messageChannels).forEach(unsub => { if (typeof unsub === 'function') unsub(); });
 
-//       const newMessageChannels: Record<string, any> = {};
+      const newMessageChannels: Record<string, any> = {};
 
-//       chatList.forEach(chat => {
-//         const qMsg = query(
-//           collection(db, 'messages'),
-//           where('chat_id', '==', chat.id),
-//           orderBy('created_at', 'asc')
-//         );
-//         const unsub = onSnapshot(qMsg, (snapshot: any) => {
-//           const docs = snapshot.docChanges();
-//           docs.forEach((change: any) => {
-//             const newMessage: any = change.doc.data();
-//             if (change.type === 'added') {
-//               setChats(prevChats => prevChats.map(prevChat => {
-//                 if (prevChat.id !== chat.id) return prevChat;
-//                 const isMyMessage = userProfile && newMessage.sender_id === (userProfile as any).id;
-//                 const messageStatus = isMyMessage ? { isRead: false, isDelivered: false, isSent: true } : undefined;
-//                 return {
-//                   ...prevChat,
-//                   lastMessage: newMessage.content,
-//                   lastMessageTime: formatMessageTime(newMessage.created_at),
-//                   lastMessageId: newMessage.id,
-//                   lastMessageSenderId: newMessage.sender_id,
-//                   lastMessageStatus: messageStatus,
-//                   unreadCount: userProfile && newMessage.sender_id !== (userProfile as any).id ? prevChat.unreadCount + 1 : prevChat.unreadCount,
-//                   hasUnreadMessages: userProfile && newMessage.sender_id !== (userProfile as any).id ? true : prevChat.hasUnreadMessages,
-//                 } as any;
-//               }));
-//             } else if (change.type === 'modified') {
-//               const updatedMessage: any = change.doc.data();
-//               setChats(prevChats => prevChats.map(prevChat => {
-//                 if (prevChat.id !== chat.id) return prevChat;
-//                 if (prevChat.lastMessageId === updatedMessage.id && userProfile) {
-//                   const isMyMessage = updatedMessage.sender_id === (userProfile as any).id;
-//                   let newStatus = prevChat.lastMessageStatus;
-//                   if (isMyMessage) {
-//                     const isRead = Array.isArray(updatedMessage.read_by) && updatedMessage.read_by.includes(prevChat.participant.id);
-//                     const isDelivered = Array.isArray(updatedMessage.delivered_to) && updatedMessage.delivered_to.includes(prevChat.participant.id);
-//                     newStatus = { isRead, isDelivered, isSent: true };
-//                   }
-//                   return { ...prevChat, lastMessageStatus: newStatus, lastMessageReactions: updatedMessage.reactions || prevChat.lastMessageReactions } as any;
-//                 }
-//                 return prevChat;
-//               }));
-//             }
-//           });
-//         });
-//         newMessageChannels[chat.id] = unsub;
-//       });
+      chatList.forEach(chat => {
+        const qMsg = query(
+          collection(db, 'messages'),
+          where('chat_id', '==', chat.id),
+          orderBy('created_at', 'asc')
+        );
+        const unsub = onSnapshot(qMsg, (snapshot: any) => {
+          const docs = snapshot.docChanges();
+          docs.forEach((change: any) => {
+            const newMessage: any = change.doc.data();
+            if (change.type === 'added') {
+              setChats(prevChats => prevChats.map(prevChat => {
+                if (prevChat.id !== chat.id) return prevChat;
+                const isMyMessage = userProfile && newMessage.sender_id === (userProfile as any).id;
+                const messageStatus = isMyMessage ? { isRead: false, isDelivered: false, isSent: true } : undefined;
+                return {
+                  ...prevChat,
+                  lastMessage: newMessage.content,
+                  lastMessageTime: formatMessageTime(newMessage.created_at),
+                  lastMessageId: newMessage.id,
+                  lastMessageSenderId: newMessage.sender_id,
+                  lastMessageStatus: messageStatus,
+                  unreadCount: userProfile && newMessage.sender_id !== (userProfile as any).id ? prevChat.unreadCount + 1 : prevChat.unreadCount,
+                  hasUnreadMessages: userProfile && newMessage.sender_id !== (userProfile as any).id ? true : prevChat.hasUnreadMessages,
+                } as any;
+              }));
+            } else if (change.type === 'modified') {
+              const updatedMessage: any = change.doc.data();
+              setChats(prevChats => prevChats.map(prevChat => {
+                if (prevChat.id !== chat.id) return prevChat;
+                if (prevChat.lastMessageId === updatedMessage.id && userProfile) {
+                  const isMyMessage = updatedMessage.sender_id === (userProfile as any).id;
+                  let newStatus = prevChat.lastMessageStatus;
+                  if (isMyMessage) {
+                    const isRead = Array.isArray(updatedMessage.read_by) && updatedMessage.read_by.includes(prevChat.participant.id);
+                    const isDelivered = Array.isArray(updatedMessage.delivered_to) && updatedMessage.delivered_to.includes(prevChat.participant.id);
+                    newStatus = { isRead, isDelivered, isSent: true };
+                  }
+                  return { ...prevChat, lastMessageStatus: newStatus, lastMessageReactions: updatedMessage.reactions || prevChat.lastMessageReactions } as any;
+                }
+                // Decrement unread count when other user's message becomes read by me
+                if (userProfile && updatedMessage.sender_id !== (userProfile as any).id) {
+                  const readByMe = Array.isArray(updatedMessage.read_by) && updatedMessage.read_by.includes((userProfile as any).id);
+                  if (readByMe && prevChat.unreadCount > 0) {
+                    const nextUnread = Math.max(0, (prevChat.unreadCount || 0) - 1);
+                    return { ...prevChat, unreadCount: nextUnread, hasUnreadMessages: nextUnread > 0 } as any;
+                  }
+                }
+                return prevChat;
+              }));
+            }
+          });
+        });
+        newMessageChannels[chat.id] = unsub;
+      });
 
-//       setMessageChannels(newMessageChannels);
-//     } catch (error) {
-//       console.error('Error setting up message subscriptions:', error);
-//     }
-//   }, [currentUser, messageChannels]);
+      setMessageChannels(newMessageChannels);
+    } catch (error) {
+      console.error('Error setting up message subscriptions:', error);
+    }
+  }, [currentUser, messageChannels]);
 
-//   // ADDED: Function to load unread count for a specific chat
-//   const loadUnreadCountForChat = async (chatId: string, userId: string): Promise<number> => {
-//     try {
-//       const qUnread = query(
-//         collection(db, 'messages'),
-//         where('chat_id', '==', chatId),
-//         where('sender_id', '!=', userId)
-//       );
-//       const snap = await getDocs(qUnread);
-//       const count = snap.docs.filter((d: any) => {
-//         const data = d.data() as any;
-//         return !Array.isArray(data.read_by) || !data.read_by.includes(userId);
-//       }).length;
-//       return count;
-//     } catch (error) {
-//       console.error('Error loading unread count:', error);
-//       return 0;
-//     }
-//   };
-//   const setupRealtimeSubscription = async () => {
-//     try {
-//       const user = auth.currentUser;
-//       if (!user) return;
+  // ADDED: Function to load unread count for a specific chat
+  const loadUnreadCountForChat = async (chatId: string, userId: string): Promise<number> => {
+    try {
+      const qUnread = query(
+        collection(db, 'messages'),
+        where('chat_id', '==', chatId),
+        where('sender_id', '!=', userId)
+      );
+      const snap = await getDocs(qUnread);
+      const count = snap.docs.filter((d: any) => {
+        const data = d.data() as any;
+        return !Array.isArray(data.read_by) || !data.read_by.includes(userId);
+      }).length;
+      return count;
+    } catch (error) {
+      console.error('Error loading unread count:', error);
+      return 0;
+    }
+  };
+  const setupRealtimeSubscription = async () => {
+    try {
+      const user = auth.currentUser;
+      if (!user) return;
 
-//       let userProfile = currentUser;
-//       if (!userProfile) {
-//         const qUser = query(collection(db, 'user_profiles'), where('auth_user_id', '==', user.uid));
-//         const snapUser = await getDocs(qUser);
-//         userProfile = snapUser.docs[0]?.data() as any;
-//         if (!userProfile) return;
-//       }
+      let userProfile = currentUser;
+      if (!userProfile) {
+        const qUser = query(collection(db, 'user_profiles'), where('auth_user_id', '==', user.uid));
+        const snapUser = await getDocs(qUser);
+        userProfile = snapUser.docs[0]?.data() as any;
+        if (!userProfile) return;
+      }
 
-//       if (realtimeChannel && typeof realtimeChannel === 'function') {
-//         realtimeChannel();
-//       }
+      if (realtimeChannel && typeof realtimeChannel === 'function') realtimeChannel();
+      if (contactsRealtimeChannel && typeof contactsRealtimeChannel === 'function') contactsRealtimeChannel();
 
-//       const userId = (userProfile as any).id;
-//       const qChats = query(collection(db, 'chats'), where('participants', 'array-contains', userId));
-//       const unsub = onSnapshot(qChats, () => {
-//         loadChats();
-//       });
+      const userId = (userProfile as any).id;
+      const qChats = query(collection(db, 'chats'), where('participants_auth', 'array-contains', user.uid));
+      const unsub = onSnapshot(qChats, async () => {
+        await loadChats();
+      });
 
-//       setRealtimeChannel(() => unsub);
-//     } catch (error) {
-//       console.error('Error setting up realtime subscription:', error);
-//     }
-//   };
+      setRealtimeChannel(() => unsub);
 
-//   // MODIFIED: Setup realtime subscription when currentUser is loaded
-//   useEffect(() => {
-//     setupRealtimeSubscription();
-//   }, [currentUser]);
+      // Subscribe to contacts changes (user-owned subcollection)
+      const ownerProfileId = (userProfile as any)?.id;
+      if (!ownerProfileId) return;
+      const qContacts = collection(db, 'user_profiles', ownerProfileId, 'contacts');
+      const unsubContacts = onSnapshot(qContacts, async () => {
+        await loadChats();
+      });
+      setContactsRealtimeChannel(() => unsubContacts);
+    } catch (error) {
+      console.error('Error setting up realtime subscription:', error);
+    }
+  };
 
-//   // ADDED: 1-second polling fallback to refresh chat list (throttled)
-//   useEffect(() => {
-//     let isFetching = false;
-//     const interval = setInterval(async () => {
-//       if (isFetching) return;
-//       isFetching = true;
-//       try {
-//         await loadChats();
-//       } finally {
-//         isFetching = false;
-//       }
-//     }, 1000);
-//     return () => clearInterval(interval);
-//   }, []);
+  // MODIFIED: Setup realtime subscription when currentUser is loaded
+  useEffect(() => {
+    setupRealtimeSubscription();
+  }, [currentUser]);
 
-//   // ADDED: Auto-cleanup typing indicators after 5 seconds
-//   useEffect(() => {
-//     const interval = setInterval(() => {
-//       setTypingUsers(prev => {
-//         const now = new Date().getTime();
-//         const updated = { ...prev };
-//         let hasChanges = false;
+  // App-wide presence: mark online when app active, offline when background
+  useEffect(() => {
+    const handleAppStateChange = async (next: string) => {
+      if (!currentUser) return;
+      appStateRef.current = next;
+      try {
+        if (next === 'active') {
+          await FirebaseService.updateOnlineStatus((currentUser as any).id, true);
+        } else if (next === 'background') {
+          await FirebaseService.updateOnlineStatus((currentUser as any).id, false);
+        }
+      } catch {}
+    };
+    const sub = AppState.addEventListener('change', handleAppStateChange);
+    // Initial set online
+    (async () => { if (currentUser) { try { await FirebaseService.updateOnlineStatus((currentUser as any).id, true); } catch {} } })();
+    return () => {
+      sub.remove();
+      (async () => { if (currentUser) { try { await FirebaseService.updateOnlineStatus((currentUser as any).id, false); } catch {} } })();
+    };
+  }, [currentUser]);
 
-//         Object.keys(updated).forEach(chatId => {
-//           const typingList = updated[chatId];
-//           const filtered = typingList.filter(user => {
-//             const userTime = new Date(user.updated_at).getTime();
-//             return now - userTime < 5000; // Remove if older than 5 seconds
-//           });
+  // ADDED: 1-second polling fallback to refresh chat list (throttled)
+  useEffect(() => {
+    let isFetching = false;
+    const interval = setInterval(async () => {
+      if (isFetching) return;
+      isFetching = true;
+      try {
+        await loadChats();
+      } finally {
+        isFetching = false;
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
 
-//           if (filtered.length !== typingList.length) {
-//             hasChanges = true;
-//             if (filtered.length === 0) {
-//               delete updated[chatId];
-//             } else {
-//               updated[chatId] = filtered;
-//             }
-//           }
-//         });
+  // ADDED: Auto-cleanup typing indicators after 5 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setTypingUsers(prev => {
+        const now = new Date().getTime();
+        const updated = { ...prev };
+        let hasChanges = false;
 
-//         return hasChanges ? updated : prev;
-//       });
-//     }, 1000);
+        Object.keys(updated).forEach(chatId => {
+          const typingList = updated[chatId];
+          const filtered = typingList.filter(user => {
+            const userTime = new Date(user.updated_at).getTime();
+            return now - userTime < 5000; // Remove if older than 5 seconds
+          });
 
-//     return () => clearInterval(interval);
-//   }, []);
+          if (filtered.length !== typingList.length) {
+            hasChanges = true;
+            if (filtered.length === 0) {
+              delete updated[chatId];
+            } else {
+              updated[chatId] = filtered;
+            }
+          }
+        });
 
-//   const loadChats = async () => {
-//     try {
-//       const user = auth.currentUser;
-//       if (!user) return;
+        return hasChanges ? updated : prev;
+      });
+    }, 1000);
 
-//       const qUser = query(collection(db, 'user_profiles'), where('auth_user_id', '==', user.uid));
-//       const userSnap = await getDocs(qUser);
-//       const currentUserProfile = userSnap.docs[0]?.data() as any | undefined;
+    return () => clearInterval(interval);
+  }, []);
+
+  const loadChats = async () => {
+      const capitalizeName = (name: string | null | undefined) => {
+        if (!name) return '';
+        return name
+          .split(' ')
+          .filter(Boolean)
+          .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+          .join(' ');
+      };
+    try {
+      const user = auth.currentUser;
+      if (!user) return;
+
+      const qUser = query(collection(db, 'user_profiles'), where('auth_user_id', '==', user.uid));
+      const userSnap = await getDocs(qUser);
+      const currentUserProfile = userSnap.docs[0]?.data() as any | undefined;
       
-//       if (!currentUserProfile) {
-//         console.error('No user profile found');
-//         setLoading(false);
-//         setRefreshing(false);
-//         return;
-//       }
+      if (!currentUserProfile) {
+        console.error('No user profile found');
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
 
-//       // Add the document ID to the profile
-//       const currentUserProfileWithId = {
-//         id: userSnap.docs[0].id,
-//         ...currentUserProfile
-//       };
+      // Add the document ID to the profile
+      const currentUserProfileWithId = {
+        id: userSnap.docs[0].id,
+        ...currentUserProfile
+      };
 
-//       const qChats = query(collection(db, 'chats'), where('participants', 'array-contains', currentUserProfileWithId.id));
-//       const chatsSnap = await getDocs(qChats);
+      const qChats = query(collection(db, 'chats'), where('participants_auth', 'array-contains', user.uid));
+      const chatsSnap = await getDocs(qChats);
 
-//       const transformedChats: Chat[] = [];
-//       for (const chatDoc of chatsSnap.docs) {
-//         const chat = chatDoc.data() as any;
-//         const otherParticipantId = (chat.participants as string[]).find((pid: string) => pid !== currentUserProfileWithId.id);
-//         if (!otherParticipantId) continue;
+      const transformedChats: Chat[] = [];
+      for (const chatDoc of chatsSnap.docs) {
+        const chat = chatDoc.data() as any;
+        const otherParticipantId = (chat.participants as string[]).find((pid: string) => pid !== currentUserProfileWithId.id);
+        if (!otherParticipantId) continue;
 
-//         // Query by document ID instead of field
-//         const otherProfileDoc = await getDoc(doc(db, 'user_profiles', otherParticipantId));
-//         if (!otherProfileDoc.exists()) continue;
-        
-//         const participantData = {
-//           id: otherProfileDoc.id,
-//           ...otherProfileDoc.data()
-//         } as any;
+        // Prefer denormalized participant summaries if present
+        let participantData: any = null;
+        if (chat.participant_summaries && chat.participant_summaries[otherParticipantId]) {
+          participantData = {
+            id: otherParticipantId,
+            ...chat.participant_summaries[otherParticipantId],
+          } as any;
+        } else {
+          // Fallback to fetching profile; guard with try/catch to avoid breaking on permission errors
+          try {
+            const otherProfileDoc = await getDoc(doc(db, 'user_profiles', otherParticipantId));
+            if (otherProfileDoc.exists()) {
+              participantData = {
+                id: otherProfileDoc.id,
+                ...otherProfileDoc.data(),
+              } as any;
+            }
+          } catch (e) {
+            // Permission error: use minimal placeholder
+            participantData = {
+              id: otherParticipantId,
+              username: 'QuickTalk user',
+              about: '',
+              profile_picture_url: null,
+              phone: '',
+            } as any;
+          }
+          if (!participantData) {
+            // If still nothing, skip this chat entry
+            continue;
+          }
+        }
 
-//         const contactSnap = await getDocs(query(
-//           collection(db, 'contacts'),
-//           where('owner_id', '==', currentUserProfileWithId.id),
-//           where('contact_user_id', '==', otherParticipantId)
-//         ));
-//         const contactData = contactSnap.docs[0]?.data() as any | undefined;
+        // Normalize profile picture so avatars render for newly saved contacts
+        if (participantData) {
+          participantData.profile_picture_url = participantData.profile_picture_url || participantData.profile_picture_data || null;
+        }
 
-//         // Get last message by query
-//         const lastMsgSnap = await getDocs(query(
-//           collection(db, 'messages'),
-//           where('chat_id', '==', chatDoc.id),
-//           orderBy('created_at', 'desc'),
-//           limit(1)
-//         ));
-//         const lastMessage = lastMsgSnap.docs[0]?.data() as any | undefined;
+        const contactSnap = await getDocs(query(
+          collection(db, 'user_profiles', currentUserProfileWithId.id, 'contacts'),
+          where('contact_user_id', '==', otherParticipantId)
+        ));
+        const contactData = contactSnap.docs[0]?.data() as any | undefined;
 
-//         let messageStatus = { isRead: false, isDelivered: false, isSent: false };
-//         if (lastMessage && lastMessage.sender_id === currentUserProfileWithId.id) {
-//           const isRead = Array.isArray(lastMessage.read_by) && lastMessage.read_by.includes(otherParticipantId);
-//           const isDelivered = Array.isArray(lastMessage.delivered_to) && lastMessage.delivered_to.includes(otherParticipantId);
-//           messageStatus = { isRead, isDelivered, isSent: true };
-//         }
+        // Get last message by query
+        const lastMsgSnap = await getDocs(query(
+          collection(db, 'messages'),
+          where('chatId', '==', chatDoc.id),
+          orderBy('timestamp', 'desc'),
+          limit(1)
+        ));
+        const lastMessage = lastMsgSnap.docs[0]?.data() as any | undefined;
 
-//         // Unread count
-//         const unreadSnap = await getDocs(query(
-//           collection(db, 'messages'),
-//           where('chat_id', '==', chatDoc.id)
-//         ));
-//         let unreadCount = 0;
-//         unreadSnap.docs.forEach((d: any) => {
-//           const m = d.data() as any;
-//           if (m.sender_id !== currentUserProfileWithId.id && (!Array.isArray(m.read_by) || !m.read_by.includes(currentUserProfileWithId.id))) unreadCount += 1;
-//         });
+        let messageStatus = { isRead: false, isDelivered: false, isSent: false };
+        if (lastMessage && lastMessage.senderId === currentUserProfileWithId.id) {
+          const isRead = Array.isArray(lastMessage.readBy) && lastMessage.readBy.includes(otherParticipantId);
+          const isDelivered = Array.isArray(lastMessage.delivered_to) && lastMessage.delivered_to.includes(otherParticipantId);
+          messageStatus = { isRead, isDelivered, isSent: true };
+        }
 
-//         transformedChats.push({
-//           id: chatDoc.id,
-//           participant: participantData,
-//           contactInfo: contactData ? { first_name: contactData.first_name, last_name: contactData.last_name, is_saved: true } : { first_name: '', last_name: '', is_saved: false },
-//           lastMessage: lastMessage?.content || 'No messages yet',
-//           lastMessageTime: lastMessage?.created_at ? formatMessageTime(lastMessage.created_at) : formatMessageTime(chat.created_at || new Date().toISOString()),
-//           lastMessageId: lastMessage?.id || '',
-//           lastMessageSenderId: lastMessage?.sender_id || '',
-//           lastMessageStatus: messageStatus,
-//           lastMessageReactions: lastMessage?.reactions || undefined,
-//           unreadCount,
-//           hasUnreadMessages: unreadCount > 0,
-//         } as any);
-//       }
+        // Unread count - use same field names as last message query
+        const unreadSnap = await getDocs(query(
+          collection(db, 'messages'),
+          where('chatId', '==', chatDoc.id)
+        ));
+        let unreadCount = 0;
+        unreadSnap.docs.forEach((d: any) => {
+          const m = d.data() as any;
+          if (m.senderId !== currentUserProfileWithId.id && (!Array.isArray(m.readBy) || !m.readBy.includes(currentUserProfileWithId.id))) unreadCount += 1;
+        });
 
-//       setChats(transformedChats);
-//       setIsOffline(false);
-//       // Cache chats for offline usage
-//       try {
-//         await AsyncStorage.setItem(`cache:chats:${currentUserProfileWithId.id}`, JSON.stringify(transformedChats));
-//       } catch {}
-//       // ADDED: Setup message subscriptions for all chats
-//       setupMessageSubscriptions(transformedChats);
-//     } catch (error: any) {
-//       console.error('Error loading chats:', error);
-//       // Fallback: try load cached chats
-//       try {
-//         const user = auth.currentUser; let ownerId = 'unknown';
-//         if (user) {
-//           const q = query(collection(db, 'user_profiles'), where('auth_user_id', '==', user.uid));
-//           const snap = await getDocs(q);
-//           const profile = snap.docs[0]?.data() as any | undefined;
-//           if (profile) ownerId = snap.docs[0].id;
-//         }
-//         const cached = await AsyncStorage.getItem(`cache:chats:${ownerId}`);
-//         if (cached) {
-//           const parsed = JSON.parse(cached);
-//           if (Array.isArray(parsed)) setChats(parsed);
-//         }
-//       } catch {}
-//       setIsOffline(true);
-//     } finally {
-//       setLoading(false);
-//       setRefreshing(false);
-//     }
-//   };
+        transformedChats.push({
+          id: chatDoc.id,
+          participant: participantData,
+          contactInfo: contactData
+            ? {
+                first_name: capitalizeName(contactData.first_name),
+                last_name: capitalizeName(contactData.last_name),
+                is_saved: true,
+              }
+            : { first_name: '', last_name: '', is_saved: false },
+          lastMessage: lastMessage?.content || 'No messages yet',
+          lastMessageTime: lastMessage?.created_at ? formatMessageTime(lastMessage.created_at) : formatMessageTime(chat.created_at || new Date().toISOString()),
+          lastMessageId: lastMessage?.id || '',
+          lastMessageSenderId: lastMessage?.sender_id || '',
+          lastMessageStatus: messageStatus,
+          lastMessageReactions: lastMessage?.reactions || undefined,
+          unreadCount,
+          hasUnreadMessages: unreadCount > 0,
+        } as any);
+      }
 
-//   const formatMessageTime = (timestamp: string) => {
-//     const date = new Date(timestamp);
-//     const now = new Date();
-//     const diffInMinutes = Math.floor((now.getTime() - date.getTime()) / (1000 * 60));
+      setChats(transformedChats);
+      setIsOffline(false);
+      // Cache chats for offline usage
+      try {
+        await AsyncStorage.setItem(`cache:chats:${currentUserProfileWithId.id}`, JSON.stringify(transformedChats));
+      } catch {}
+      // ADDED: Setup message subscriptions for all chats
+      setupMessageSubscriptions(transformedChats);
+    } catch (error: any) {
+      console.error('Error loading chats:', error);
+      // Fallback: try load cached chats
+      try {
+        const user = auth.currentUser; let ownerId = 'unknown';
+        if (user) {
+          const q = query(collection(db, 'user_profiles'), where('auth_user_id', '==', user.uid));
+          const snap = await getDocs(q);
+          const profile = snap.docs[0]?.data() as any | undefined;
+          if (profile) ownerId = snap.docs[0].id;
+        }
+        const cached = await AsyncStorage.getItem(`cache:chats:${ownerId}`);
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed)) setChats(parsed);
+        }
+      } catch {}
+      setIsOffline(true);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  const formatMessageTime = (timestamp: string) => {
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffInMinutes = Math.floor((now.getTime() - date.getTime()) / (1000 * 60));
     
-//     if (diffInMinutes < 1) {
-//       return 'Just now';
-//     } else if (diffInMinutes < 60) {
-//       return `${diffInMinutes} min ago`;
-//     } else if (diffInMinutes < 1440) {
-//       const hours = Math.floor(diffInMinutes / 60);
-//       return `${hours} hour${hours > 1 ? 's' : ''} ago`;
-//     } else {
-//       const days = Math.floor(diffInMinutes / 1440);
-//       if (days === 1) {
-//         return 'Yesterday';
-//       } else if (days < 7) {
-//         return `${days} days ago`;
-//       } else {
-//         return date.toLocaleDateString();
-//       }
-//     }
-//   };
+    if (diffInMinutes < 1) {
+      return 'Just now';
+    } else if (diffInMinutes < 60) {
+      return `${diffInMinutes} min ago`;
+    } else if (diffInMinutes < 1440) {
+      const hours = Math.floor(diffInMinutes / 60);
+      return `${hours} hour${hours > 1 ? 's' : ''} ago`;
+    } else {
+      const days = Math.floor(diffInMinutes / 1440);
+      if (days === 1) {
+        return 'Yesterday';
+      } else if (days < 7) {
+        return `${days} days ago`;
+      } else {
+        return date.toLocaleDateString();
+      }
+    }
+  };
 
-//   const onRefresh = () => {
-//     setRefreshing(true);
-//     loadChats();
-//   };
+  const onRefresh = () => {
+    setRefreshing(true);
+    loadChats();
+  };
 
-//   const handleNewMessage = () => {
-//     router.push('/select-contact');
-//   };
+  const handleNewMessage = () => {
+    router.push('/select-contact');
+  };
 
-//   const handleChatPress = (chat: Chat) => {
-//     router.push(`/chat/${chat.id}`);
-//   };
+  const handleChatPress = (chat: Chat) => {
+    prefetch(`/chat/${chat.id}`);
+    const contactName = chat.contactInfo?.is_saved
+      ? `${chat.contactInfo.first_name}${chat.contactInfo.last_name ? ` ${chat.contactInfo.last_name}` : ''}`
+      : '';
+    (router.push as any)({
+      pathname: `/chat/${chat.id}`,
+      params: contactName ? { contactName } : undefined,
+    });
+  };
 
-//   const toggleMenu = () => setMenuVisible(!menuVisible);
-//   const toggleSearch = () => setShowSearchBar(!showSearchBar);
+  const toggleMenu = () => setMenuVisible(!menuVisible);
+  const toggleSearch = () => setShowSearchBar(!showSearchBar);
 
-//   const handleMenuItemPress = (path: any) => {
-//     setMenuVisible(false);
-//     router.push(path);
-//   };
+  const handleMenuItemPress = (path: any) => {
+    setMenuVisible(false);
+    router.push(path);
+  };
 
-//   // ADDED: Function to get display name for chat
-//   const getDisplayName = (chat: Chat) => {
-//     if (chat.contactInfo?.is_saved && chat.contactInfo.first_name) {
-//       return `${chat.contactInfo.first_name}${chat.contactInfo.last_name ? ` ${chat.contactInfo.last_name}` : ''}`;
-//     }
-//     return chat.participant.phone;
-//   };
+  // ADDED: Function to get display name for chat
+  const getDisplayName = (chat: Chat) => {
+    if (chat.contactInfo?.is_saved && chat.contactInfo.first_name) {
+      return `${chat.contactInfo.first_name}${chat.contactInfo.last_name ? ` ${chat.contactInfo.last_name}` : ''}`;
+    }
+    return chat.participant.phone;
+  };
 
-//   // ADDED: Function to render message status icon
-//   const renderMessageStatus = (chat: Chat) => {
-//     if (!chat.lastMessageStatus || chat.lastMessageSenderId !== currentUser?.id) {
-//       return null;
-//     }
+  // ADDED: Function to render message status icon
+  const renderMessageStatus = (chat: Chat) => {
+    if (!chat.lastMessageStatus || chat.lastMessageSenderId !== currentUser?.id) {
+      return null;
+    }
 
-//     const { isRead, isDelivered, isSent } = chat.lastMessageStatus;
+    const { isRead, isDelivered, isSent } = chat.lastMessageStatus;
 
-//     if (isRead) {
-//       // Double check (read) - green
-//       return (
-//         <View style={styles.doubleCheckContainer}>
-//           <Feather name='check' size={10} color="#4CAF50" style={styles.firstCheck} />
-//           <Feather name='check' size={10} color="#4CAF50" style={styles.secondCheck} />
-//         </View>
-//       );
-//     }
-//     if (isDelivered) {
-//       // Double check (delivered) - blue
-//       return (
-//         <View style={styles.doubleCheckContainer}>
-//           <Feather name='check' size={10} color="#2196F3" style={styles.firstCheck} />
-//           <Feather name='check' size={10} color="#2196F3" style={styles.secondCheck} />
-//         </View>
-//       );
-//     }
-//     if (isSent) {
-//       // Single check (sent) - gray
-//       return <Feather name='check' size={12} color="#999" />;
-//     }
+    if (isRead) {
+      // Double check (read) - green
+      return (
+        <View style={styles.doubleCheckContainer}>
+          <Feather name='check' size={10} color="#4CAF50" style={styles.firstCheck} />
+          <Feather name='check' size={10} color="#4CAF50" style={styles.secondCheck} />
+        </View>
+      );
+    }
+    if (isDelivered) {
+      // Double check (delivered) - blue
+      return (
+        <View style={styles.doubleCheckContainer}>
+          <Feather name='check' size={10} color="#2196F3" style={styles.firstCheck} />
+          <Feather name='check' size={10} color="#2196F3" style={styles.secondCheck} />
+        </View>
+      );
+    }
+    if (isSent) {
+      // Single check (sent) - gray
+      return <Feather name='check' size={12} color="#999" />;
+    }
     
-//     return null;
-//   };
+    return null;
+  };
 
-//   // ADDED: Function to render reaction indicator
-//   const renderReactionIndicator = (chat: Chat) => {
-//     // This would show if the last message has reactions
-//     // For now, we'll just show a heart icon if there are reactions
-//     if (chat.lastMessageReactions && Object.keys(chat.lastMessageReactions).length > 0) {
-//       return (
-//         <View style={styles.reactionIndicator}>
-//           <Text style={styles.reactionEmoji}>❤️</Text>
-//         </View>
-//       );
-//     }
-//     return null;
-//   };
-//   const filteredChats = chats.filter(chat =>
-//     getDisplayName(chat).toLowerCase().includes(searchQuery.toLowerCase()) ||
-//     chat.participant.username.toLowerCase().includes(searchQuery.toLowerCase()) ||
-//     chat.lastMessage.toLowerCase().includes(searchQuery.toLowerCase())
-//   );
+  // ADDED: Function to render reaction indicator
+  const renderReactionIndicator = (chat: Chat) => {
+    // This would show if the last message has reactions
+    // For now, we'll just show a heart icon if there are reactions
+    if (chat.lastMessageReactions && Object.keys(chat.lastMessageReactions).length > 0) {
+      return (
+        <View style={styles.reactionIndicator}>
+          <Text style={styles.reactionEmoji}>❤️</Text>
+        </View>
+      );
+    }
+    return null;
+  };
+  const filteredChats = chats.filter(chat =>
+    getDisplayName(chat).toLowerCase().includes(searchQuery.toLowerCase()) ||
+    chat.participant.username.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    chat.lastMessage.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
-//   const renderChatItem = ({ item }: { item: Chat }) => (
-//     <TouchableOpacity style={styles.chatItem} onPress={() => handleChatPress(item)}>
-//       <View style={styles.avatarContainer}>
-//         {item.participant.profile_picture_url ? (
-//           <Image source={{ uri: item.participant.profile_picture_url }} style={styles.avatar} />
-//         ) : (
-//           <View style={styles.avatarPlaceholder}>
-//             <Feather name="user" size={24} color="#666" />
-//           </View>
-//         )}
-//         {/* Hide online indicator when offline (no network) */}
-//         {(!isOffline && item.participant.is_online) && <View style={styles.onlineIndicator} />}
-//       </View>
+  const renderChatItem = ({ item }: { item: Chat }) => (
+    <TouchableOpacity style={styles.chatItem} onPress={() => handleChatPress(item)}>
+      <View style={styles.avatarContainer}>
+        {item.participant.profile_picture_url ? (
+          <Image source={{ uri: item.participant.profile_picture_url }} style={styles.avatar} />
+        ) : (
+          <View style={styles.avatarPlaceholder}>
+            <Feather name="user" size={24} color="#666" />
+          </View>
+        )}
+        {/* Hide online indicator when offline (no network) */}
+        {(!isOffline && item.participant.is_online) && <View style={styles.onlineIndicator} />}
+      </View>
 
-//       <View style={styles.chatContent}>
-//         <View style={styles.chatHeader}>
-//           {/* MODIFIED: Show contact name or phone number */}
-//           <Text style={styles.username}>{getDisplayName(item)}</Text>
-//           <View style={styles.chatMeta}>
-//             {item.hasUnreadMessages && <View style={styles.unreadDot} />}
-//             <Text style={styles.timestamp}>{item.lastMessageTime}</Text>
-//           </View>
-//         </View>
+      <View style={styles.chatContent}>
+        <View style={styles.chatHeader}>
+          {/* MODIFIED: Show contact name or phone number */}
+          <Text style={styles.username}>{getDisplayName(item)}</Text>
+          <View style={styles.chatMeta}>
+            {item.hasUnreadMessages && <View style={styles.unreadDot} />}
+            <Text style={styles.timestamp}>{item.lastMessageTime}</Text>
+          </View>
+        </View>
         
-//         {/* ADDED: Show typing indicator if user is typing in this chat */}
-//         {typingUsers[item.id] && typingUsers[item.id].length > 0 ? (
-//           <Text style={styles.typingIndicator}>
-//             {typingUsers[item.id][0].username} is typing...
-//           </Text>
-//         ) : (
-//           <View style={styles.messageRow}>
-//             <Text 
-//               style={[
-//                 styles.lastMessage,
-//                 item.hasUnreadMessages && styles.unreadMessage
-//               ]} 
-//               numberOfLines={1}
-//             >
-//               {item.lastMessage}
-//             </Text>
-//             {item.unreadCount > 0 && (
-//               <View style={styles.unreadBadge}>
-//                 <Text style={styles.unreadCount}>
-//                   {item.unreadCount > 99 ? '99+' : item.unreadCount}
-//                 </Text>
-//               </View>
-//             )}
-//           </View>
-//         )}
+        {/* ADDED: Show typing indicator if user is typing in this chat */}
+        {typingUsers[item.id] && typingUsers[item.id].length > 0 ? (
+          <Text style={styles.typingIndicator}>
+            {typingUsers[item.id][0].username} is typing...
+          </Text>
+        ) : (
+          <View style={styles.messageRow}>
+            <Text 
+              style={[
+                styles.lastMessage,
+                item.hasUnreadMessages && styles.unreadMessage
+              ]} 
+              numberOfLines={1}
+            >
+              {item.lastMessage}
+            </Text>
+            {item.unreadCount > 0 && (
+              <View style={styles.unreadBadge}>
+                <Text style={styles.unreadCount}>
+                  {item.unreadCount > 99 ? '99+' : item.unreadCount}
+                </Text>
+              </View>
+            )}
+          </View>
+        )}
         
-//         {/* REMOVED: Last seen display from tabs screen */}
-//       </View>
-//     </TouchableOpacity>
-//   );
+        {/* REMOVED: Last seen display from tabs screen */}
+      </View>
+    </TouchableOpacity>
+  );
 
-//   const renderEmptyState = () => (
-//     <View style={styles.emptyState}>
-//       <Feather name='message-circle' size={64} color="#ccc" />
-//       <Text style={styles.emptyTitle}>No Chats Yet</Text>
-//       <Text style={styles.emptySubtitle}>
-//         Start a conversation by tapping the message button below
-//       </Text>
-//     </View>
-//   );
+  const renderEmptyState = () => (
+    <View style={styles.emptyState}>
+      <Feather name='message-circle' size={64} color="#ccc" />
+      <Text style={styles.emptyTitle}>No Chats Yet</Text>
+      <Text style={styles.emptySubtitle}>
+        Start a conversation by tapping the message button below
+      </Text>
+    </View>
+  );
 
-//   // Cleanup subscription on unmount
-//   useEffect(() => {
-//     return () => {
-//       if (realtimeChannel && typeof realtimeChannel === 'function') realtimeChannel();
-//       Object.values(messageChannels).forEach(unsub => { if (typeof unsub === 'function') unsub(); });
-//     };
-//   }, [realtimeChannel, messageChannels]);
+  // Cleanup subscription on unmount
+  useEffect(() => {
+    return () => {
+      if (realtimeChannel && typeof realtimeChannel === 'function') realtimeChannel();
+      Object.values(messageChannels).forEach(unsub => { if (typeof unsub === 'function') unsub(); });
+    };
+  }, [realtimeChannel, messageChannels]);
 
-//   if (loading) {
-//     return (
-//       <View style={styles.loadingContainer}>
-//         <ActivityIndicator size="large" color="#3A805B" />
-//         <Text style={styles.loadingText}>Loading chats...</Text>
-//       </View>
-//     );
-//   }
+  // Prefetch first few chat routes when chats load
+  useEffect(() => {
+    chats.slice(0, 10).forEach(c => prefetch(`/chat/${c.id}`));
+  }, [chats, prefetch]);
 
-//   return (
-//     <View style={styles.container}>
-//       {/* Header */}
-//       <View style={
-//         styles.header
-//       }>
-//         <Text style={styles.title}>QuickTalk</Text>
-//         <View style={styles.headerRight}>
-//           <TouchableOpacity style={styles.headerButton} onPress={toggleSearch}>
-//             <Feather name="search" size={24} color="#fff" />
-//           </TouchableOpacity>
-//           <TouchableOpacity style={styles.headerButton} onPress={toggleMenu}>
-//             <Feather name="more-vertical" size={24} color="#fff" />
-//           </TouchableOpacity>
-//         </View>
-//       </View>
+  return (
+    <View style={styles.container}>
+      {/* Header */}
+      <View style={
+        styles.header
+      }>
+        <Text style={styles.title}>QuickTalk</Text>
+        <View style={styles.headerRight}>
+          <TouchableOpacity style={styles.headerButton} onPress={toggleSearch}>
+            <Feather name="search" size={24} color="#fff" />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.headerButton} onPress={toggleMenu}>
+            <Feather name="more-vertical" size={24} color="#fff" />
+          </TouchableOpacity>
+        </View>
+      </View>
 
-//       {/* Dropdown Menu */}
-//       {menuVisible && (
-//         <Pressable style={styles.menuOverlay} onPress={() => setMenuVisible(false)}>
-//           <View style={styles.menu}>
-//             <TouchableOpacity style={styles.menuItem} onPress={() => handleMenuItemPress("/linked-devices")}>
-//               <Text style={styles.menuItemText}>Linked Devices</Text>
-//             </TouchableOpacity>
-//             <TouchableOpacity style={styles.menuItem} onPress={() => handleMenuItemPress("/new-group")}>
-//               <Text style={styles.menuItemText}>New Group</Text>
-//             </TouchableOpacity>
-//             <TouchableOpacity style={styles.menuItem} onPress={() => handleMenuItemPress("/settings")}>
-//               <Text style={styles.menuItemText}>Settings</Text>
-//             </TouchableOpacity>
-//           </View>
-//         </Pressable>
-//       )}
+      {/* Loading indicator under header while chats load */}
+      {loading && (
+        <View style={styles.inlineLoading}>
+          <ActivityIndicator size="small" color="#3A805B" />
+          <Text style={styles.inlineLoadingText}>Loading chats...</Text>
+        </View>
+      )}
 
-//       {/* Search Bar */}
-//       {showSearchBar && (
-//         <View style={styles.searchContainer}>
-//           <View style={styles.searchInputContainer}>
-//             <Feather name='search' size={20} color="#666" />
-//             <TextInput
-//               style={styles.searchInput}
-//               placeholder="Search conversations..."
-//               value={searchQuery}
-//               onChangeText={setSearchQuery}
-//               placeholderTextColor="#999"
-//             />
-//           </View>
-//         </View>
-//       )}
+      {/* Dropdown Menu */}
+      {menuVisible && (
+        <Pressable style={styles.menuOverlay} onPress={() => setMenuVisible(false)}>
+          <View style={styles.menu}>
+            <TouchableOpacity style={styles.menuItem} onPress={() => handleMenuItemPress("/linked-devices")}>
+              <Text style={styles.menuItemText}>Linked Devices</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.menuItem} onPress={() => handleMenuItemPress("/new-group")}>
+              <Text style={styles.menuItemText}>New Group</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.menuItem} onPress={() => handleMenuItemPress("/settings")}>
+              <Text style={styles.menuItemText}>Settings</Text>
+            </TouchableOpacity>
+          </View>
+        </Pressable>
+      )}
 
-//       {/* Chat List */}
-//       <FlatList
-//         data={filteredChats}
-//         renderItem={renderChatItem}
-//         keyExtractor={(item) => item.id}
-//         contentContainerStyle={styles.listContainer}
-//         showsVerticalScrollIndicator={false}
-//         refreshControl={
-//           <RefreshControl
-//             refreshing={refreshing}
-//             onRefresh={onRefresh}
-//             colors={['#3A805B']}
-//             tintColor="#3A805B"
-//           />
-//         }
-//         ListEmptyComponent={renderEmptyState}
-//       />
+      {/* Search Bar */}
+      {showSearchBar && (
+        <View style={styles.searchContainer}>
+          <View style={styles.searchInputContainer}>
+            <Feather name='search' size={20} color="#666" />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search conversations..."
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              placeholderTextColor="#999"
+            />
+          </View>
+        </View>
+      )}
 
-//       {/* FAB */}
-//       <TouchableOpacity style={styles.fab} onPress={handleNewMessage}>
-//         <Feather name='message-circle' size={24} color="#fff" />
-//       </TouchableOpacity>
-//     </View>
-//   );
-// }
+      {/* Chat List */}
+      <FlatList
+        data={filteredChats}
+        renderItem={renderChatItem}
+        keyExtractor={(item) => item.id}
+        contentContainerStyle={styles.listContainer}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            colors={['#3A805B']}
+            tintColor="#3A805B"
+          />
+        }
+        ListEmptyComponent={renderEmptyState}
+      />
+
+      {/* FAB */}
+      <TouchableOpacity style={styles.fab} onPress={handleNewMessage}>
+        <Feather name='message-circle' size={24} color="#fff" />
+      </TouchableOpacity>
+    </View>
+  );
+}
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f8f9fa', position: 'relative' },
@@ -822,6 +925,8 @@ const styles = StyleSheet.create({
   },
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   loadingText: { marginTop: 16, fontSize: 16, color: '#666' },
+  inlineLoading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center',  gap: 8, paddingVertical: 8, paddingHorizontal: 16, backgroundColor: '#f0f7f3', borderBottomWidth: 1, borderBottomColor: '#e0eee6' },
+  inlineLoadingText: { color: '#3A805B', fontSize: 14 },
   emptyState: {
     alignItems: 'center',
     justifyContent: 'center',
@@ -909,20 +1014,3 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
 });
-
-export default function HomeScreen() {
-  const router = useRouter();
-    const handleNewMessage = () => {
-    router.push('/select-contact');
-  };
-
-  return(
-    <View>
-     <TouchableOpacity style={styles.fabr} onPress={handleNewMessage}>
-      <Text>Home Screen</Text>
-         <Feather name='message-circle' size={24} color="#fff" />
-      </TouchableOpacity>
-    </View>
-  )
-
-}

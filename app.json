@@ -10,6 +10,7 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
+      "jsEngine": "hermes",
       "infoPlist": {
         "NSCameraUsageDescription": "This app uses the camera to take photos and videos.",
         "NSMicrophoneUsageDescription": "This app uses the microphone to record videos.",
@@ -28,7 +29,9 @@
         "CAMERA",
         "RECORD_AUDIO",
         "POST_NOTIFICATIONS"
-      ]
+      ],
+      "jsEngine": "hermes",
+      "enableProguardInReleaseBuilds": true
     },
     "web": {
       "bundler": "metro",

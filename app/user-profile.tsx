@@ -7,6 +7,7 @@ import {
   ScrollView,
   Image,
   ActivityIndicator,
+  TextInput,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -14,10 +15,8 @@ import { Feather } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Toast from 'react-native-toast-message';
 import NetInfo from '@react-native-community/netinfo';
-
-// 🔹 Firestore imports
-import { doc, onSnapshot } from 'firebase/firestore';
-import { db } from '@/lib/firebase'; // make sure path is correct
+import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 
 export default function UserProfileScreen() {
   const router = useRouter();
@@ -25,15 +24,21 @@ export default function UserProfileScreen() {
   const params = useLocalSearchParams();
 
   // navigation params (some are still needed)
-  const userId = params.userId as string;
+  const userId = (params.id as string) || (params.userId as string);
   const isSaved = params.isSaved === 'true';
   const contactId = params.contactId as string;
+  const ownerProfileId = params.ownerProfileId as string;
   const contactName = params.contactName as string;
 
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<any>(null);
   const [aboutUpdatedAt, setAboutUpdatedAt] = useState<string>('');
   const [isConnected, setIsConnected] = useState(true);
+  const [isEditingSavedName, setIsEditingSavedName] = useState(false);
+  const [editFirstName, setEditFirstName] = useState('');
+  const [editLastName, setEditLastName] = useState('');
+  const [savedFirstName, setSavedFirstName] = useState<string | null>(null);
+  const [savedLastName, setSavedLastName] = useState<string | null>(null);
 
   useEffect(() => {
     if (!userId) return;
@@ -65,7 +70,22 @@ export default function UserProfileScreen() {
       async (snapshot) => {
         if (snapshot.exists()) {
           const data = snapshot.data();
-          setProfile(data);
+          console.log('Raw profile data from Firestore:', {
+            userId,
+            allFields: Object.keys(data),
+            profilePicture: data.profilePicture,
+            profile_picture_data: data.profile_picture_data,
+            profile_picture_url: data.profile_picture_url,
+          });
+          // Normalize fields: ensure an id is present and map any picture field to profile_picture_url
+          const normalized: any = {
+            id: snapshot.id,
+            ...data,
+          };
+          normalized.profile_picture_url =
+            data.profile_picture_url || data.profile_picture_data || data.profilePicture || null;
+
+          setProfile(normalized);
           setLoading(false);
 
           if (data.updated_at) setAboutUpdatedAt(data.updated_at);
@@ -74,8 +94,10 @@ export default function UserProfileScreen() {
           try {
             await AsyncStorage.setItem(
               `user_profile:${userId}`,
-              JSON.stringify(data)
+              JSON.stringify(normalized)
             );
+            console.log(`user_profile:${userId}`+ "" +"profile completed ");
+            
           } catch {}
         } else {
           Toast.show({ type: 'error', text1: 'User not found' });
@@ -94,9 +116,62 @@ export default function UserProfileScreen() {
     };
   }, [userId]);
 
+  // Live-update saved contact name when this profile is a saved contact
+  useEffect(() => {
+    if (!isSaved || !contactId || !ownerProfileId) return;
+    const unsubscribe = onSnapshot(
+      doc(db, 'user_profiles', ownerProfileId, 'contacts', contactId),
+      (snap) => {
+        if (snap.exists()) {
+          const data: any = snap.data();
+          const display = (data.displayName || '').trim();
+          if (display) {
+            const [first, ...rest] = display.split(' ');
+            setSavedFirstName(first || null);
+            setSavedLastName(rest.join(' ') || null);
+          } else {
+            setSavedFirstName((data.first_name || '').trim() || null);
+            setSavedLastName((data.last_name || '').trim() || null);
+          }
+        }
+      },
+      (error) => {
+        console.error('Contact watch error:', error);
+      }
+    );
+    return () => unsubscribe();
+  }, [isSaved, contactId, ownerProfileId]);
+
   const handleEditContact = () => {
     if (!isSaved || !contactId) return;
-    router.push(`/edit-contact?contactId=${contactId}`);
+    router.push({
+      pathname: '/edit-contact',
+      params: {
+        contactId,
+        firstName: contactName ? contactName.split(' ')[0] : (profile?.username || ''),
+        lastName: contactName ? contactName.split(' ').slice(1).join(' ') : '',
+      },
+    });
+  };
+
+  const handleSaveEditedName = async () => {
+    if (!isSaved || !contactId || !ownerProfileId) return;
+    if (!editFirstName.trim()) {
+      Toast.show({ type: 'error', text1: 'First name required' });
+      return;
+    }
+    try {
+      await updateDoc(doc(db, 'user_profiles', ownerProfileId, 'contacts', contactId), {
+        first_name: editFirstName.trim(),
+        last_name: editLastName.trim() || null,
+        displayName: `${editFirstName.trim()} ${editLastName.trim()}`.trim(),
+      });
+      Toast.show({ type: 'success', text1: 'Saved', text2: 'Contact name updated' });
+      setIsEditingSavedName(false);
+    } catch (e: any) {
+      console.error('Error updating contact name:', e);
+      Toast.show({ type: 'error', text1: 'Update failed', text2: e?.message || 'Insufficient permissions' });
+    }
   };
 
   const handleSaveContact = () => {
@@ -106,15 +181,23 @@ export default function UserProfileScreen() {
       params: {
         prefillPhone: profile.phone,
         prefillFirstName: profile.username,
+        prefillCountry: (profile.phone && profile.phone.startsWith('+')) ? '' : (profile.countryCode || ''),
         prefillUsername: profile.username,
         fromProfile: 'true',
       },
     });
   };
 
-  const formatLastSeen = (lastSeenTime: string) => {
+  const formatLastSeen = (lastSeenTime: any) => {
     if (!lastSeenTime) return '';
-    const date = new Date(lastSeenTime);
+    let date: Date | null = null;
+    if (typeof lastSeenTime === 'string') {
+      const d = new Date(lastSeenTime);
+      date = isNaN(d.getTime()) ? null : d;
+    } else if (lastSeenTime?.toDate) {
+      try { date = lastSeenTime.toDate(); } catch { date = null; }
+    }
+    if (!date) return '';
     const now = new Date();
     const diffInMinutes = Math.floor((now.getTime() - date.getTime()) / (1000 * 60));
     if (diffInMinutes < 1) return 'Just now';
@@ -140,9 +223,24 @@ export default function UserProfileScreen() {
     return date.toLocaleDateString();
   };
 
+  const capitalizeName = (name: string | null | undefined) => {
+    if (!name) return '';
+    return name
+      .split(' ')
+      .filter(Boolean)
+      .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+      .join(' ');
+  };
+
   const getDisplayName = () => {
     if (!profile) return '';
-    return isSaved && contactName ? contactName : profile.phone;
+    if (isSaved && (savedFirstName || savedLastName || contactName)) {
+      const first = savedFirstName ?? (contactName ? contactName.split(' ')[0] : '');
+      const last = savedLastName ?? (contactName ? contactName.split(' ').slice(1).join(' ') : '');
+      return capitalizeName(`${first} ${last}`.trim());
+    }
+    if (profile.username) return capitalizeName(profile.username);
+    return profile.phone;
   };
 
   if (loading) {
@@ -176,8 +274,19 @@ export default function UserProfileScreen() {
         {/* Profile Section */}
         <View style={styles.profileSection}>
           <View style={styles.avatarContainer}>
-            {profile.profilePicture ? (
-              <Image source={{ uri: profile.profilePicture }} style={styles.avatar} />
+            {(() => {
+              // Debug profile picture fields
+              console.log('User profile picture fields:', {
+                userId,
+                profilePicture: profile?.profilePicture,
+                profile_picture_data: profile?.profile_picture_data,
+                profile_picture_url: profile?.profile_picture_url,
+                finalValue: profile?.profile_picture_url,
+              });
+              return null;
+            })()}
+            {profile.profile_picture_url ? (
+              <Image source={{ uri: profile.profile_picture_url }} style={styles.avatar} />
             ) : (
               <View style={styles.avatarPlaceholder}>
                 <Feather name='user' size={40} color="#666" />
@@ -199,9 +308,9 @@ export default function UserProfileScreen() {
               ]}
             />
             <Text style={styles.statusText}>
-              {profile.isOnline
+              {(profile.isOnline ?? profile.is_online)
                 ? 'Online'
-                : `Last seen ${formatLastSeen(profile.lastSeen)}`}
+                : `Last seen ${formatLastSeen(profile.lastSeen || profile.last_seen)}`}
             </Text>
           </View>
           {!isConnected && (
@@ -238,10 +347,44 @@ export default function UserProfileScreen() {
           </View>
         ) : (
           <View style={styles.actionsSection}>
-            <TouchableOpacity style={styles.saveButton} onPress={handleEditContact}>
-              <Feather name='edit-3' size={20} color="#fff" />
-              <Text style={styles.saveButtonText}>Edit Contact</Text>
+            <TouchableOpacity style={styles.secondaryButton} onPress={handleEditContact}>
+              <Feather name='edit-3' size={18} color="#3A805B" />
+              <Text style={styles.secondaryButtonText}>Edit Saved Name</Text>
             </TouchableOpacity>
+            {isEditingSavedName && (
+              <View style={{ marginTop: 12 }}>
+                <Text style={styles.infoLabel}>First name</Text>
+                <View style={styles.inlineInput}>
+                  <TextInput
+                    style={styles.inlineTextInput}
+                    value={editFirstName}
+                    onChangeText={setEditFirstName}
+                    placeholder='First name'
+                    placeholderTextColor='#999'
+                  />
+                </View>
+                <Text style={[styles.infoLabel, { marginTop: 10 }]}>Last name</Text>
+                <View style={styles.inlineInput}>
+                  <TextInput
+                    style={styles.inlineTextInput}
+                    value={editLastName}
+                    onChangeText={setEditLastName}
+                    placeholder='Last name (optional)'
+                    placeholderTextColor='#999'
+                  />
+                </View>
+                <View style={{ flexDirection: 'row', gap: 12, marginTop: 12 }}>
+                  <TouchableOpacity style={styles.saveButton} onPress={handleSaveEditedName}>
+                    <Feather name='check' size={20} color="#fff" />
+                    <Text style={styles.saveButtonText}>Save</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.secondaryButton} onPress={() => setIsEditingSavedName(false)}>
+                    <Feather name='x' size={18} color="#3A805B" />
+                    <Text style={styles.secondaryButtonText}>Cancel</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
           </View>
         )}
 
@@ -259,7 +402,9 @@ export default function UserProfileScreen() {
           {isSaved && (
             <View style={styles.infoItem}>
               <Text style={styles.infoLabel}>Saved as</Text>
-              <Text style={styles.infoValue}>{contactName}</Text>
+              <Text style={styles.infoUsername}>
+                {capitalizeName(`${savedFirstName ?? ''} ${savedLastName ?? ''}`.trim()) || contactName}
+              </Text>
             </View>
           )}
         </View>
@@ -269,8 +414,14 @@ export default function UserProfileScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f8f9fa' },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  container: { 
+    flex: 1, 
+    backgroundColor: '#f9f9f9' 
+  },
+  center: { flex: 1, 
+    alignItems: 'center', 
+    justifyContent: 'center' 
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -278,7 +429,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     backgroundColor: '#3A805B',
   },
-  headerTitle: { fontSize: 20, fontWeight: '600', color: '#fff' },
+  headerTitle: { 
+    fontSize: 20, 
+    fontWeight: '600', 
+    color: '#fff' 
+  },
   placeholder: { width: 40 },
   content: { flex: 1 },
   profileSection: {
@@ -289,8 +444,16 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#e9ecef',
   },
-  avatarContainer: { marginBottom: 20 },
-  avatar: { width: 120, height: 120, borderRadius: 60, borderWidth: 4, borderColor: '#3A805B' },
+  avatarContainer: { 
+    marginBottom: 20 
+  },
+  avatar: { 
+    width: 120, 
+    height: 120, 
+    borderRadius: 60, 
+    borderWidth: 4, 
+    borderColor: '#3A805B' 
+  },
   avatarPlaceholder: {
     width: 120,
     height: 120,
@@ -301,9 +464,21 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#dee2e6',
   },
-  displayName: { fontSize: 24, fontWeight: '700', color: '#333', marginBottom: 4, textAlign: 'center' },
-  username: { fontSize: 16, color: '#3A805B', marginBottom: 8, fontWeight: '500' },
-  phoneNumber: { fontSize: 16, color: '#666', marginBottom: 16 },
+  displayName: { 
+    fontSize: 24, 
+    fontWeight: '700', 
+    color: '#333', 
+    marginBottom: 4, 
+    textAlign: 'center' 
+  },
+  username: { fontSize: 16, 
+    color: '#3A805B', marginBottom: 8, 
+    fontWeight: '500' },
+  phoneNumber: { 
+    fontSize: 16, 
+    color: '#666', 
+    marginBottom: 16 
+  },
   statusSection: {
     backgroundColor: '#fff',
     paddingHorizontal: 20,
@@ -311,11 +486,27 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#e9ecef',
   },
-  statusItem: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  statusIndicator: { width: 12, height: 12, borderRadius: 6 },
-  onlineIndicator: { backgroundColor: '#4CAF50' },
-  offlineIndicator: { backgroundColor: '#999' },
-  statusText: { fontSize: 16, color: '#333', fontWeight: '500' },
+  statusItem: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    gap: 12 
+  },
+  statusIndicator: { 
+    width: 12, 
+    height: 12, 
+    borderRadius: 6 
+  },
+  onlineIndicator: { 
+    backgroundColor: '#4CAF50' 
+  },
+  offlineIndicator: { 
+    backgroundColor: '#999' 
+  },
+  statusText: { 
+    fontSize: 16, 
+    color: '#333', 
+    fontWeight: '500' 
+  },
   aboutSection: {
     backgroundColor: '#fff',
     paddingHorizontal: 20,
@@ -324,11 +515,32 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#e9ecef',
   },
-  aboutHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
-  aboutTitle: { fontSize: 16, fontWeight: '600', color: '#333' },
-  aboutText: { fontSize: 16, color: '#333', lineHeight: 24, marginBottom: 12 },
-  aboutFooter: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  aboutUpdated: { fontSize: 12, color: '#999' },
+  aboutHeader: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    gap: 8, 
+    marginBottom: 12 
+  },
+  aboutTitle: { 
+    fontSize: 16, 
+    fontWeight: '600', 
+    color: '#333' 
+  },
+  aboutText: { 
+    fontSize: 16, 
+    color: '#333', 
+    lineHeight: 24, 
+    marginBottom: 12 
+  },
+  aboutFooter: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    gap: 6 
+  },
+  aboutUpdated: { 
+    fontSize: 12, 
+    color: '#999' 
+  },
   actionsSection: {
     paddingHorizontal: 20,
     paddingVertical: 20,
@@ -346,9 +558,39 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     gap: 8,
   },
-  saveButtonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
-  infoSection: { backgroundColor: '#fff', paddingHorizontal: 20, paddingVertical: 20, marginTop: 8 },
-  infoTitle: { fontSize: 16, fontWeight: '600', color: '#333', marginBottom: 16 },
+  saveButtonText: { color: '#fff', 
+    fontSize: 16, 
+    fontWeight: '600' 
+  },
+  secondaryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f0fff8',
+    paddingVertical: 14,
+    borderRadius: 12,
+    gap: 8,
+    borderWidth: 1,
+    borderColor: '#3A805B',
+  },
+  secondaryButtonText: { 
+    color: '#3A805B', 
+    fontSize: 16, 
+    fontWeight: '600' 
+  },
+  infoSection: { 
+    backgroundColor: '#fff', 
+    paddingHorizontal: 20, 
+    paddingVertical: 20, 
+    marginTop: 8, 
+    marginBottom: 50 
+  },
+  infoTitle: { 
+    fontSize: 16, 
+    fontWeight: '600', 
+    color: '#333', 
+    marginBottom: 16 
+  },
   infoItem: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -357,6 +599,31 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#f0f0f0',
   },
-  infoLabel: { fontSize: 14, color: '#666', fontWeight: '500' },
-  infoValue: { fontSize: 14, color: '#333', fontWeight: '600' },
+  infoLabel: { 
+    fontSize: 14, 
+    color: '#666', 
+    fontWeight: '500' 
+  },
+  infoValue: { 
+    fontSize: 14, 
+    color: '#333', 
+    fontWeight: '600',
+  },
+  infoUsername: {
+    textTransform: "capitalize",
+    color: '#333',
+    fontWeight: '600',
+  },
+  inlineInput: {
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    borderRadius: 8,
+    backgroundColor: '#fff',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  inlineTextInput: {
+    fontSize: 16,
+    color: '#000',
+  },
 });

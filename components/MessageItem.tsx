@@ -258,13 +258,13 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
   },
   messageBubble: {
-    maxWidth: '80%',
+    maxWidth: '100%',
     paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingVertical: 20,
     borderRadius: 18,
   },
   myMessageBubble: {
-    backgroundColor: '#3A805B',
+    backgroundColor: 'red',
     borderBottomRightRadius: 4,
   },
   otherMessageBubble: {

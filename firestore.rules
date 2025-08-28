@@ -1,0 +1,81 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------- Helpers ----------
+    function isSignedIn() { return request.auth != null; }
+
+    // Safe get profile and return its auth uid (or null)
+    function profileAuthUid(profileId) {
+      return get(/databases/$(database)/documents/user_profiles/$(profileId)).data.auth_user_id;
+    }
+
+    // ---------- user_profiles ----------
+    match /user_profiles/{profileId} {
+      // Any signed-in user can read profiles
+      allow read: if isSignedIn();
+
+      // Create only own profile (client must write auth_user_id)
+      allow create: if isSignedIn()
+        && request.auth.uid == request.resource.data.auth_user_id
+        && request.resource.data.auth_user_id is string;
+
+      // Update/Delete only by owner
+      allow update, delete: if isSignedIn() && request.auth.uid == resource.data.auth_user_id;
+
+      // ---------- Contacts subcollection ----------
+      match /contacts/{contactProfileId} {
+        // Owner-only access based on path param (profileId)
+        allow read, list: if isSignedIn() && request.auth.uid == profileAuthUid(profileId);
+
+        allow create, update: if isSignedIn()
+          && request.auth.uid == profileAuthUid(profileId)
+          && request.resource.data.ownerProfileId == profileId
+          && request.resource.data.contactProfileId == contactProfileId
+          && request.resource.data.ownerAuthUid == request.auth.uid;
+
+        // No client hard-deletes (you can soft-delete)
+        allow delete: if false;
+      }
+    }
+
+    // ---------- chats ----------
+    match /chats/{chatId} {
+      // Dev-friendly: allow signed-in reads/writes to avoid console issues.
+      // Harden later by storing participant auth_uids and validating membership.
+      allow read, list: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update: if isSignedIn();
+      allow delete: if false;
+    }
+
+    // ---------- messages ----------
+    match /messages/{messageId} {
+      allow read, list: if isSignedIn();
+
+      // Validate minimal schema to avoid rejects
+      allow create: if isSignedIn()
+        && request.resource.data.chatId is string
+        && request.resource.data.senderId is string
+        && request.resource.data.receiverId is string
+        && request.resource.data.content is string
+        && request.resource.data.type in ['text','image','file'];
+
+      // Allow updates (status, delivered/read arrays) by signed-in clients
+      allow update: if isSignedIn();
+
+      // No client deletes
+      allow delete: if false;
+    }
+
+    // ---------- typing_indicators ----------
+    match /typing_indicators/{docId} {
+      allow read, list: if isSignedIn();
+      allow create, update: if isSignedIn()
+        && request.resource.data.chat_id is string
+        && request.resource.data.user_id is string
+        && request.resource.data.is_typing is bool;
+      allow delete: if false;
+    }
+  }
+}

@@ -26,8 +26,11 @@ import {
   getDocs,
   query,
   setDoc,
+  onSnapshot,
   where,
 } from 'firebase/firestore';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import NetInfo from '@react-native-community/netinfo';
 
 interface Contact {
   id: string;
@@ -41,6 +44,8 @@ interface Contact {
     username: string;
     about: string;
     profile_picture_data: string | null;
+    profile_picture_url: string | null;
+    profilePicture: string | null;
   } | null;
   created_at: string;
 }
@@ -58,20 +63,56 @@ interface ContactOption {
   contact?: Contact;
 }
 
+const useRoutePrefetch = (router: any) => {
+  const prefetch = useCallback((path: string) => { try { router?.prefetch?.(path); } catch {} }, [router]);
+  return prefetch;
+};
+
 export default function ContactsScreen() {
   const router = useRouter();
+  const prefetch = useRoutePrefetch(router);
   const insets = useSafeAreaInsets();
+  const [currentUserProfileId, setCurrentUserProfileId] = useState<string>('');
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [filteredContacts, setFilteredContacts] = useState<ContactOption[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [isConnected, setIsConnected] = useState(true);
 
   useFocusEffect(
     useCallback(() => {
-      loadContacts();
+      (async () => {
+        try {
+          const cached = await AsyncStorage.getItem('cache:contacts');
+          if (cached) {
+            setContacts(JSON.parse(cached));
+            setLoading(false);
+          }
+        } catch {}
+      })();
     }, [])
   );
+
+  useEffect(() => {
+    const unsub = NetInfo.addEventListener(state => setIsConnected(!!state.isConnected));
+    return () => unsub();
+  }, []);
+
+  // Real-time: subscribe to current user's contacts subcollection once profile id is known
+  useEffect(() => {
+    if (!currentUserProfileId) return;
+    const unsub = onSnapshot(
+      collection(db, 'user_profiles', currentUserProfileId, 'contacts'),
+      () => { loadContacts(); }
+    );
+    return () => unsub();
+  }, [currentUserProfileId]);
+
+  // Initial load
+  useEffect(() => {
+    loadContacts();
+  }, []);
 
   useEffect(() => {
     filterContacts();
@@ -98,7 +139,7 @@ export default function ContactsScreen() {
   const loadContacts = async () => {
     try {
       const user = auth.currentUser;
-      if (!user) return;
+      if (!user) { setLoading(false); return; }
 
       //  Get current user's profile
       const userSnap = await getDocs(
@@ -107,6 +148,7 @@ export default function ContactsScreen() {
 
       if (userSnap.empty) {
         console.warn('No user profile found for this user.');
+        setLoading(false);
         return;
       }
 
@@ -115,22 +157,28 @@ export default function ContactsScreen() {
         ...userSnap.docs[0].data(),
       };
 
+      // Save for subscriptions
+      if (!currentUserProfileId) setCurrentUserProfileId(currentUserProfile.id);
+
       //  Load contacts
-      let contactsSnap = await getDocs(
-        query(collection(db, 'contacts'), where('owner_id', '==', currentUserProfile.id))
+      const contactsSnap = await getDocs(
+        collection(db, 'user_profiles', currentUserProfile.id, 'contacts')
       );
 
-      //  Fallback if using auth.uid instead of profile.id
-      if (contactsSnap.empty) {
-        contactsSnap = await getDocs(
-          query(collection(db, 'contacts'), where('owner_id', '==', user.uid))
-        );
-      }
-
-      const rawContacts = contactsSnap.docs.map(d => ({
-        id: d.id,
-        ...(d.data() as any),
-      }));
+      const rawContacts = contactsSnap.docs.map(d => {
+        const data: any = d.data();
+        // Support both legacy and new schema
+        const display = (data.displayName || '').trim();
+        const [first, ...rest] = display.split(' ');
+        return {
+          id: d.id,
+          first_name: data.first_name ?? first ?? '',
+          last_name: data.last_name ?? (rest.join(' ') || null),
+          phone: data.phone || '',
+          is_quicktalk_user: !!data.is_quicktalk_user,
+          contact_user_id: data.contact_user_id || null,
+        } as Contact;
+      });
 
       let sortedContacts = sortContactsAlphabetically(rawContacts as any);
 
@@ -148,6 +196,12 @@ export default function ContactsScreen() {
           );
           if (!linkedSnap.empty) {
             linked = { id: linkedSnap.docs[0].id, ...linkedSnap.docs[0].data() };
+            console.log('Linked contact profile data:', {
+              id: linked.id,
+              profile_picture_data: linked.profile_picture_data,
+              profile_picture_url: linked.profile_picture_url,
+              profilePicture: linked.profilePicture,
+            });
           }
         } else {
           // Try linking by phone
@@ -159,9 +213,20 @@ export default function ContactsScreen() {
             : null;
 
           if (linked) {
+            console.log('Newly linked contact profile data:', {
+              id: linked.id,
+              profile_picture_data: linked.profile_picture_data,
+              profile_picture_url: linked.profile_picture_url,
+              profilePicture: linked.profilePicture,
+            });
             await setDoc(
-              doc(db, 'contacts', c.id),
-              { is_quicktalk_user: true, contact_user_id: linked.id },
+              doc(db, 'user_profiles', currentUserProfile.id, 'contacts', c.id),
+              {
+                is_quicktalk_user: true,
+                contact_user_id: linked.id,
+                ownerProfileId: currentUserProfile.id,
+                ownerAuthUid: user.uid,
+              },
               { merge: true }
             );
           }
@@ -179,12 +244,15 @@ export default function ContactsScreen() {
               username: linked.username,
               about: linked.about,
               profile_picture_data: linked.profile_picture_data,
+              profile_picture_url: linked.profile_picture_url,
+              profilePicture: linked.profilePicture,
             }
             : null,
         });
       }
 
       setContacts(enrichedContacts);
+      try { await AsyncStorage.setItem('cache:contacts', JSON.stringify(enrichedContacts)); } catch {}
     } catch (error: any) {
       console.error('Error loading contacts:', error);
       Toast.show({
@@ -285,104 +353,85 @@ export default function ContactsScreen() {
   };
 
 
-  const handleStartChat = async (contact: Contact) => {
+  // start chat is intentionally removed to reset the flow
+  const startChatWithContact = async (contact: Contact) => {
     try {
-      console.log("Starting chat with contact:", contact);
-
-      let otherParticipantId = contact.contact_user_id;
-
-      // If not already linked, try by phone
-      if (!otherParticipantId) {
-        const linkedSnap = await getDocs(
-          query(collection(db, "user_profiles"), where("phone", "==", contact.phone))
-        );
-
-        if (!linkedSnap.empty) {
-          const linkedDoc = linkedSnap.docs[0];
-          otherParticipantId = linkedDoc.id; // ✅ use Firestore doc id
-          await setDoc(
-            doc(db, "contacts", contact.id),
-            { is_quicktalk_user: true, contact_user_id: linkedDoc.id },
-            { merge: true }
-          );
-        }
+      if (!contact.is_quicktalk_user || !contact.contact_user_id) {
+        Toast.show({ type: 'info', text1: 'Not on QuickTalk' });
+        return;
       }
-
-      if (!otherParticipantId) {
-        Toast.show({
-          type: "info",
-          text1: "Not on QuickTalk",
-          text2: `${contact.first_name} is not using QuickTalk yet`,
-        });
+      const user = auth.currentUser;
+      if (!user) {
+        Toast.show({ type: 'error', text1: 'Not signed in' });
         return;
       }
 
-      // Get current user's profile (doc id)
-      const user = auth.currentUser;
-      if (!user) return;
-      const profileSnap = await getDocs(
-        query(collection(db, "user_profiles"), where("auth_user_id", "==", user.uid))
-      );
-      if (profileSnap.empty) return;
-      const currentUserDoc = profileSnap.docs[0];
-      const currentUserProfile = { id: currentUserDoc.id, ...currentUserDoc.data() };
+      // Resolve current user's profile ID (used in chats.participants)
+      const meSnap = await getDocs(query(collection(db, 'user_profiles'), where('auth_user_id', '==', user.uid)));
+      const meDoc = meSnap.docs[0];
+      if (!meDoc) {
+        Toast.show({ type: 'error', text1: 'Profile missing' });
+        return;
+      }
+      const myProfileId = meDoc.id;
 
-      // Check if chat already exists (pair_key of profile doc IDs)
-      const pairKey = [currentUserProfile.id, otherParticipantId].sort().join("_");
-      const existingSnap = await getDocs(
-        query(collection(db, "chats"), where("pair_key", "==", pairKey))
-      );
+      const otherProfileId = contact.contact_user_id;
+      // Get other user's auth uid for participants_auth
+      const otherSnap = await getDocs(query(collection(db, 'user_profiles'), where('__name__', '==', otherProfileId)));
+      const otherData = otherSnap.docs[0]?.data() as any | undefined;
+      const otherAuthUid = otherData?.auth_user_id || null;
 
-      if (!existingSnap.empty) {
-        const chatId = existingSnap.docs[0].id;
-        router.push(`/chat/${chatId}`);
+      // Find existing chat among my chats
+      const myChatsSnap = await getDocs(query(collection(db, 'chats'), where('participants_auth', 'array-contains', user.uid)));
+      const existing = myChatsSnap.docs.find(d => {
+        const data = d.data() as any;
+        const parts: string[] = data.participants || [];
+        return Array.isArray(parts) && parts.includes(myProfileId) && parts.includes(otherProfileId);
+      });
+      if (existing) {
+        prefetch(`/chat/${existing.id}`);
+        const savedName = `${contact.first_name || ''} ${contact.last_name || ''}`.trim();
+        // Defer navigation until after current interactions to avoid Root Layout not mounted error
+        setTimeout(() => (router.push as any)({ pathname: `/chat/${existing.id}`, params: savedName ? { contactName: savedName } : undefined }), 0);
         return;
       }
 
       // Create new chat
-      const newRef = await addDoc(collection(db, "chats"), {
-        participant_1: currentUserProfile.id,
-        participant_2: otherParticipantId,
-        participants: [currentUserProfile.id, otherParticipantId],
-        pair_key: pairKey,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      });
+      // Prepare minimal participant summaries to bypass restricted profile reads in chat list
+      const participantSummaries: Record<string, any> = {
+        [myProfileId]: {
+          username: (meDoc.data() as any)?.username || 'You',
+          phone: (meDoc.data() as any)?.phone || '',
+          profile_picture_url: (meDoc.data() as any)?.profile_picture_url || (meDoc.data() as any)?.profile_picture_data || null,
+        },
+      };
+      if (otherData) {
+        participantSummaries[otherProfileId] = {
+          username: (otherData as any)?.username || 'QuickTalk user',
+          phone: (otherData as any)?.phone || '',
+          profile_picture_url: (otherData as any)?.profile_picture_url || (otherData as any)?.profile_picture_data || null,
+        };
+      }
 
-      Toast.show({
-        type: "success",
-        text1: "Chat Started",
-        text2: `Started conversation with ${contact.first_name}`,
+      const created = await addDoc(collection(db, 'chats'), {
+        participants: [myProfileId, otherProfileId],
+        participants_auth: [user.uid, ...(otherAuthUid ? [otherAuthUid] : [])],
+        participant_summaries: participantSummaries,
+        created_at: new Date().toISOString(),
       });
-      router.push(`/chat/${newRef.id}`);
-    } catch (error: any) {
-      console.error("Error starting chat:", error);
-      Toast.show({
-        type: "error",
-        text1: "Error",
-        text2: error?.message || "Failed to start chat",
-      });
+      prefetch(`/chat/${created.id}`);
+      const savedName = `${contact.first_name || ''} ${contact.last_name || ''}`.trim();
+      setTimeout(() => (router.push as any)({ pathname: `/chat/${created.id}`, params: savedName ? { contactName: savedName } : undefined }), 0);
+    } catch (e: any) {
+      console.error('Failed to start chat:', e);
+      Toast.show({ type: 'error', text1: 'Failed to start chat', text2: e?.message || 'Please try again' });
     }
   };
   
+  // Only view profile when tapping the avatar. Row press will not navigate.
   const handleContactPress = (contactOption: ContactOption) => {
     if (contactOption.type === "action" && contactOption.action) {
       contactOption.action();
-    } else if (contactOption.type === "contact" && contactOption.contact) {
-      const quicktalkId = contactOption.contact.contact_user_id;
-      if (quicktalkId) {
-        // ✅ Use the QuickTalk user profile ID, not contact doc id
-        router.push({
-          pathname: "/user-profile",
-          params: { id: quicktalkId },
-        });
-      } else {
-        Toast.show({
-          type: "info",
-          text1: "Not on QuickTalk",
-          text2: `${contactOption.contact.first_name} is not using QuickTalk yet`,
-        });
-      }
     }
   };
 
@@ -402,7 +451,22 @@ const renderContactItem = ({ item }: { item: ContactOption }) => {
 
 
     const isQuickTalkUser = !!item.contact?.is_quicktalk_user || !!item.contact?.contact_user;
-    const profilePicture = item.contact?.contact_user?.profile_picture_data;
+    const profilePicture = item.contact?.contact_user?.profile_picture_data || item.contact?.contact_user?.profile_picture_url || item.contact?.contact_user?.profilePicture;
+    const quicktalkId = item.contact?.contact_user_id;
+    const savedName = `${item.contact?.first_name || ''} ${item.contact?.last_name || ''}`.trim();
+
+    // Debug profile picture access
+    if (item.type === 'contact' && isQuickTalkUser) {
+      console.log('Rendering contact profile picture:', {
+        contactId: item.contact?.id,
+        profile_picture_data: item.contact?.contact_user?.profile_picture_data,
+        profile_picture_url: item.contact?.contact_user?.profile_picture_url,
+        profilePicture: item.contact?.contact_user?.profilePicture,
+        finalProfilePicture: profilePicture,
+      });
+    }
+
+    // Prefetch is disabled to avoid accidental navigation on row press
 
     return (
       <TouchableOpacity
@@ -413,17 +477,8 @@ const renderContactItem = ({ item }: { item: ContactOption }) => {
         onPress={() => {
           if (item.type === "action" && item.action) {
             item.action();
-          } else if (item.type === "contact" && item.contact && isQuickTalkUser) {
-            const quicktalkId = item.contact.contact_user_id;
-            if (quicktalkId) {
-              
-            // ✅ Use QuickTalk profile ID for /user-profile
-              router.push({
-                pathname: "/user-profile",
-                params: { id: quicktalkId },
-              });
-            }
           }
+          // No navigation for contact row press; avatar press handles profile view
         }}
         disabled={item.type === 'contact' && !isQuickTalkUser} //  disable press for non-QuickTalk contacts
       >
@@ -433,14 +488,27 @@ const renderContactItem = ({ item }: { item: ContactOption }) => {
             { backgroundColor: item.type === 'action' ? item.color : '#e9ecef' },
           ]}
         >
-          {item.type === 'contact' && profilePicture ? (
-            <Image source={{ uri: profilePicture }} style={styles.avatar} />
+          {item.type === 'contact' && isQuickTalkUser && quicktalkId ? (
+            <TouchableOpacity
+              onPress={() => router.push({ pathname: '/user-profile', params: { id: quicktalkId, isSaved: 'true', contactId: item.id, contactName: savedName } })}
+              activeOpacity={0.8}
+            >
+              {profilePicture ? (
+                <Image source={{ uri: profilePicture }} style={styles.avatar} />
+              ) : (
+                <Feather name={item.icon} size={24} color={item.color} />
+              )}
+            </TouchableOpacity>
           ) : (
-            <Feather
-              name={item.icon}
-              size={24}
-              color={item.type === 'action' ? '#fff' : item.color}
-            />
+            profilePicture ? (
+              <Image source={{ uri: profilePicture }} style={styles.avatar} />
+            ) : (
+              <Feather
+                name={item.icon}
+                size={24}
+                color={item.type === 'action' ? '#fff' : item.color}
+              />
+            )
           )}
         </View>
 
@@ -478,11 +546,7 @@ const renderContactItem = ({ item }: { item: ContactOption }) => {
               !isQuickTalkUser && styles.disabledButton,
             ]}
             disabled={!isQuickTalkUser}
-            onPress={() => {
-              if (item.contact) {
-                handleStartChat(item.contact);
-              }
-            }}
+            onPress={() => { if (item.contact) startChatWithContact(item.contact); }}
           >
             <Feather
               name="message-circle"
@@ -582,6 +646,10 @@ const renderContactItem = ({ item }: { item: ContactOption }) => {
             ListEmptyComponent={renderEmptyState}
             ListHeaderComponent={contacts.length > 0 ? renderHeader : null}
             keyboardShouldPersistTaps="handled"
+            initialNumToRender={20}
+            maxToRenderPerBatch={20}
+            windowSize={10}
+            removeClippedSubviews
           />
         </View>
       </TouchableWithoutFeedback>

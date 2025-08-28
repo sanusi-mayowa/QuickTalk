@@ -12,9 +12,9 @@ import { useRouter, useLocalSearchParams } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import Toast from "react-native-toast-message";
 import { auth, db } from "@/lib/firebase";
-import { addDoc, collection, getDocs, query, where } from "firebase/firestore";
+import { addDoc, collection, getDocs, query, where, doc, getDoc, setDoc } from "firebase/firestore";
 import PhoneInput from "@/components/PhoneInput";
-import { parsePhoneNumberFromString } from "libphonenumber-js/core";
+import { parsePhoneNumberFromString } from "libphonenumber-js";
 
 export default function NewContactScreen() {
   const router = useRouter();
@@ -25,10 +25,12 @@ export default function NewContactScreen() {
   const [formattedPhone, setFormattedPhone] = useState("");
   const [loading, setLoading] = useState(false);
   const [defaultCountryCode, setDefaultCountryCode] = useState<string>("US");
+  const [isPrefilled, setIsPrefilled] = useState<boolean>(false);
 
   // Prefill from params
   useEffect(() => {
     const prefillPhone = (params?.prefillPhone as string) || "";
+    const prefillCountry = (params?.prefillCountry as string) || "";
     const prefillFirstName =
       (params?.prefillFirstName as string) ||
       (params?.prefillUsername as string) ||"";
@@ -36,8 +38,9 @@ export default function NewContactScreen() {
     if (prefillFirstName) setFirstName(prefillFirstName);
 
     if (prefillPhone) {
+      setIsPrefilled(true);
       try {
-        const parsed = parsePhoneNumberFromString(prefillPhone);
+        const parsed = parsePhoneNumberFromString(prefillPhone, undefined);
         if (parsed && parsed.isValid()) {
           setDefaultCountryCode(parsed.country || "US");
           setPhoneNumber(parsed.nationalNumber || "");
@@ -80,11 +83,24 @@ export default function NewContactScreen() {
               setFormattedPhone(prefillPhone);
             }
           } else {
+            // No "+"; try using provided country fallback
+            if (prefillCountry) {
+              setDefaultCountryCode(prefillCountry.toUpperCase());
+              // Best-effort dial code mapping for common countries
+              const countryToDial: Record<string, string> = {
+                US: "+1", CA: "+1", GB: "+44", NG: "+234", IN: "+91",
+                AU: "+61", JP: "+81", KR: "+82", CN: "+86", AE: "+971", IL: "+972"
+              };
+              const dial = countryToDial[prefillCountry.toUpperCase()] || "+";
+              const national = prefillPhone.replace(/\D/g, "");
+              if (dial !== "+") setFormattedPhone(`${dial}${national}`);
+            }
             setPhoneNumber(prefillPhone);
           }
         }
       } catch {
         setPhoneNumber(prefillPhone.replace(/^\+/, ""));
+        if (prefillCountry) setDefaultCountryCode(prefillCountry.toUpperCase());
       }
     }
   }, [params]);
@@ -128,17 +144,20 @@ export default function NewContactScreen() {
 
       if (!currentUserProfile) throw new Error("User profile not found");
 
-      // Prevent duplicate contacts
-      const existingSnap = await getDocs(
-        query(
-          collection(db, "contacts"),
-          where("owner_id", "==", currentUserProfile.id),
-          where("phone", "==", formattedPhone)
-        )
+      // Determine if this phone belongs to a QuickTalk user
+      const quicktalkSnap = await getDocs(
+        query(collection(db, "user_profiles"), where("phone", "==", formattedPhone))
       );
-      const existingContact = existingSnap.docs[0]?.data();
+      const quicktalkUserExists = !quicktalkSnap.empty;
+      const linkedProfileId = quicktalkUserExists ? quicktalkSnap.docs[0].id : null;
 
-      if (existingContact) {
+      // Use stable doc id: linked profile id if present, otherwise E.164 phone
+      const contactDocId = linkedProfileId || formattedPhone;
+
+      // Prevent duplicate by checking deterministic path
+      const contactDocRef = doc(db, "user_profiles", currentUserProfile.id, "contacts", contactDocId);
+      const existingDoc = await getDoc(contactDocRef);
+      if (existingDoc.exists()) {
         Toast.show({
           type: "error",
           text1: "Contact Exists",
@@ -148,24 +167,22 @@ export default function NewContactScreen() {
         return;
       }
 
-      // Check if this phone belongs to a QuickTalk user
-      const quicktalkSnap = await getDocs(
-        query(collection(db, "user_profiles"), where("phone", "==", formattedPhone))
-      );
-      const quicktalkUserExists = !quicktalkSnap.empty;
-
-      // Save contact
-      const newRef = await addDoc(collection(db, "contacts"), {
-        owner_id: currentUserProfile.id,
+      // Save contact to subcollection to satisfy rules
+      await setDoc(contactDocRef, {
+        // Required by rules
+        ownerProfileId: currentUserProfile.id,
+        ownerAuthUid: user.uid,
+        contactProfileId: contactDocId,
+        // Display info
+        displayName: `${firstName.trim()} ${lastName.trim()}`.trim(),
         first_name: firstName.trim(),
         last_name: lastName.trim() || null,
         phone: formattedPhone,
+        // QuickTalk linking
         is_quicktalk_user: quicktalkUserExists,
-        contact_user_id: quicktalkUserExists
-          ? quicktalkSnap.docs[0].id
-          : null,
+        contact_user_id: linkedProfileId,
         created_at: new Date().toISOString(),
-      });
+      }, { merge: true });
 
       Toast.show({
         type: quicktalkUserExists ? "success" : "info",
@@ -231,16 +248,25 @@ export default function NewContactScreen() {
 
           {/* Phone Number */}
           <Text style={styles.label}>Phone Number</Text>
-          <PhoneInput
-            key={defaultCountryCode}
-            value={phoneNumber}
-            onChangeText={setPhoneNumber}
-            onChangeFormattedText={setFormattedPhone}
-            placeholder="Enter phone number"
-            defaultCode={defaultCountryCode}
-            containerStyle={styles.phoneInputContainer}
-            textInputStyle={{ color: "#000" }}
-          />
+          {isPrefilled ? (
+            <TextInput
+              style={[styles.input, styles.inputDisabled]}
+              value={formattedPhone || phoneNumber}
+              editable={false}
+              selectTextOnFocus={false}
+            />
+          ) : (
+            <PhoneInput
+              key={defaultCountryCode}
+              value={phoneNumber}
+              onChangeText={setPhoneNumber}
+              onChangeFormattedText={setFormattedPhone}
+              placeholder="Enter phone number"
+              defaultCode={defaultCountryCode}
+              containerStyle={styles.phoneInputContainer}
+              textInputStyle={{ color: "#000" }}
+            />
+          )}
         </View>
       </ScrollView>
 
@@ -293,6 +319,10 @@ const styles = StyleSheet.create({
     color: "#000",
   },
   inputActive: { borderColor: "#3A805B" },
+  inputDisabled: {
+    backgroundColor: "#f3f3f3",
+    color: "#666",
+  },
   phoneInputContainer: {
     borderWidth: 1,
     borderColor: "#ccc",

@@ -204,7 +204,7 @@ export default function CreateProfileScreen() {
     if (showCamera && Platform.OS !== "web") {
         return (
             <View style={styles.cameraContainer}>
-                <CameraView style={styles.camera} facing="front" ref={cameraRef}>
+                <CameraView style={styles.camera} facing="front" ref={`cameraRef`}>
                     <View style={styles.cameraControls}>
                         <TouchableOpacity style={styles.cancelButton} onPress={() => setShowCamera(false)}>
                             <Text style={styles.cancelButtonText}>Cancel</Text>

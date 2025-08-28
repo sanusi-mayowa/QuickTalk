@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { auth, db } from '@/lib/firebase';
-import { addDoc, arrayUnion, collection, doc, getDoc, getDocs, onSnapshot, orderBy, query, serverTimestamp, updateDoc, where } from 'firebase/firestore';
+import { addDoc, arrayUnion, collection, doc, getDoc, getDocs, onSnapshot, orderBy, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore';
 import { AppState, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -12,8 +12,9 @@ export interface Message {
   created_at: string;
   is_read: boolean;
   message_type: 'text' | 'image' | 'file';
-  read_by: Record<string, string>;
-  delivered_to?: Record<string, string>;
+  // Firestore persists arrays; normalize to arrays in state
+  read_by: string[] | Record<string, string>;
+  delivered_to?: string[] | Record<string, string>;
   reactions?: Record<string, string>; // user_id -> reaction emoji
   // ADDED: Offline support fields
   client_id?: string; // Stable client-generated id for queued messages
@@ -52,6 +53,7 @@ export function useRealtimeChat({ chatId, currentUserId, otherParticipantId }: U
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastTypingRef = useRef<number>(0);
   const lastFetchedAtRef = useRef<string>('');
+  const usernameCacheRef = useRef<Record<string, string>>({});
 
   // ADDED: Storage keys helpers
   const getMessagesCacheKey = useCallback(() => `cache:chat:${chatId}:messages`, [chatId]);
@@ -120,7 +122,7 @@ export function useRealtimeChat({ chatId, currentUserId, otherParticipantId }: U
 
   // Load initial messages
   const loadMessages = useCallback(async () => {
-    if (!chatId || !currentUserId || !otherParticipantId) {
+    if (!chatId) {
       setLoading(false);
       return;
     }
@@ -128,7 +130,17 @@ export function useRealtimeChat({ chatId, currentUserId, otherParticipantId }: U
     try {
       const qMsg = query(collection(db, 'messages'), where('chat_id', '==', chatId), orderBy('created_at', 'asc'));
       const snap = await getDocs(qMsg);
-      const serverMessages = snap.docs.map(d => d.data()) as Message[];
+      const serverMessages = snap.docs.map(d => {
+        const data: any = d.data();
+        const created = (data.created_at && typeof (data.created_at as any).toDate === 'function')
+          ? (data.created_at as any).toDate().toISOString()
+          : (data.created_at || new Date().toISOString());
+        return {
+          id: d.id,
+          ...data,
+          created_at: created,
+        } as Message;
+      });
       setMessages(serverMessages);
       // Cache server messages
       saveMessagesToCache(serverMessages);
@@ -156,31 +168,37 @@ export function useRealtimeChat({ chatId, currentUserId, otherParticipantId }: U
     } finally {
       setLoading(false);
     }
-  }, [chatId, currentUserId, otherParticipantId, saveMessagesToCache, loadMessagesFromCache, getQueuedMessages]);
+  }, [chatId, saveMessagesToCache, loadMessagesFromCache, getQueuedMessages]);
 
-  // Load other user's presence
+  // Load other user's presence via direct document ref; guard missing docs
   const loadUserPresence = useCallback(async () => {
-    if (!otherParticipantId || otherParticipantId.trim() === '' || !chatId || !currentUserId) {
-      console.warn('otherParticipantId is empty, skipping presence load');
+    if (!otherParticipantId || otherParticipantId.trim() === '') {
       return;
     }
-    
     try {
-      const qUser = query(collection(db, 'user_profiles'), where('id', '==', otherParticipantId));
-      const snap = await getDocs(qUser);
-      const data: any = snap.docs[0]?.data();
-      if (data) {
-        setOtherUserPresence({ user_id: data.id, is_online: !!data.is_online, last_seen: data.last_seen || new Date().toISOString() });
+      const otherRef = doc(db, 'user_profiles', otherParticipantId);
+      const otherSnap = await getDoc(otherRef);
+      if (!otherSnap.exists()) {
+        setOtherUserPresence(null);
+        return;
+      }
+      const data: any = otherSnap.data();
+      const normalizedLastSeen = (data.last_seen && typeof (data.last_seen as any).toDate === 'function')
+        ? (data.last_seen as any).toDate().toISOString()
+        : (data.last_seen || new Date().toISOString());
+      setOtherUserPresence({ user_id: otherParticipantId, is_online: !!data.is_online, last_seen: normalizedLastSeen });
+      // Seed username cache for typing indicators
+      if (data && (data.username || data.phone)) {
+        usernameCacheRef.current[otherParticipantId] = data.username || data.phone;
       }
     } catch (error) {
       console.error('Error loading user presence:', error);
     }
-  }, [otherParticipantId, chatId, currentUserId]);
+  }, [otherParticipantId]);
 
   // Load unread count
   const loadUnreadCount = useCallback(async () => {
     if (!chatId || chatId.trim() === '' || !currentUserId || currentUserId.trim() === '' || !otherParticipantId) {
-      console.warn('chatId or currentUserId is empty, skipping unread count load');
       return;
     }
     
@@ -240,27 +258,29 @@ export function useRealtimeChat({ chatId, currentUserId, otherParticipantId }: U
       
       const added = await addDoc(collection(db, 'messages'), {
         ...messageData,
-        created_at: new Date().toISOString(),
+        created_at: serverTimestamp(),
         read_by: [],
         delivered_to: [],
       });
       const data: any = { id: added.id, ...messageData, created_at: localCreatedAt, read_by: [], delivered_to: [] };
-
-      if (error) {
-        console.error('Supabase error inserting message:', error);
-        throw error;
-      }
       
       console.log('Message inserted successfully:', data);
       
-      // Replace local queued message with server message
+      // Replace local queued message with server message and mark as sent
       setMessages(prev => {
         const next = prev.map(m => m.client_id === clientId ? { ...data, client_id: clientId, status: 'sent' } as Message : m);
         saveMessagesToCache(next);
         return next;
       });
       const updatedSnap = await getDocs(query(collection(db, 'messages'), where('chat_id', '==', chatId), orderBy('created_at', 'asc')));
-      saveMessagesToCache(updatedSnap.docs.map(d => d.data()) as Message[]);
+      const fresh = updatedSnap.docs.map(d => {
+        const dataAny: any = d.data();
+        const created = (dataAny.created_at && typeof (dataAny.created_at as any).toDate === 'function')
+          ? (dataAny.created_at as any).toDate().toISOString()
+          : (dataAny.created_at || new Date().toISOString());
+        return { id: d.id, ...dataAny, created_at: created } as Message;
+      });
+      saveMessagesToCache(fresh);
       // Remove from offline queue if present
       await removeFromQueueByClientId(clientId);
       
@@ -295,39 +315,40 @@ export function useRealtimeChat({ chatId, currentUserId, otherParticipantId }: U
   // Send typing indicator
   const sendTypingIndicator = useCallback(async (isTyping: boolean) => {
     if (!chatId || chatId.trim() === '' || !currentUserId || currentUserId.trim() === '' || !otherParticipantId) {
-      console.warn('chatId or currentUserId is empty, skipping typing indicator');
       return;
     }
     
     try {
+      // Throttle typing indicators to avoid spam
+      const now = Date.now();
       if (isTyping) {
-        // Throttle typing indicators to avoid spam
-        const now = Date.now();
         if (now - lastTypingRef.current < 1000) return;
         lastTypingRef.current = now;
+      }
 
-        await supabase
-          .from('typing_indicators')
-          .upsert({
-            chat_id: chatId,
-            user_id: currentUserId,
-            is_typing: true,
-          });
+      const typingDocId = `${chatId}_${currentUserId}`;
+      if (isTyping) {
+        await setDoc(doc(db, 'typing_indicators', typingDocId), {
+          chat_id: chatId,
+          user_id: currentUserId,
+          is_typing: true,
+          updated_at: serverTimestamp(),
+        }, { merge: true });
 
         // Auto-stop typing after 3 seconds
         if (typingTimeoutRef.current) {
           clearTimeout(typingTimeoutRef.current);
         }
-
         typingTimeoutRef.current = setTimeout(() => {
           sendTypingIndicator(false);
         }, 3000);
       } else {
-        await supabase
-          .from('typing_indicators')
-          .delete()
-          .eq('chat_id', chatId)
-          .eq('user_id', currentUserId);
+        await setDoc(doc(db, 'typing_indicators', typingDocId), {
+          chat_id: chatId,
+          user_id: currentUserId,
+          is_typing: false,
+          updated_at: serverTimestamp(),
+        }, { merge: true });
 
         if (typingTimeoutRef.current) {
           clearTimeout(typingTimeoutRef.current);
@@ -382,34 +403,32 @@ export function useRealtimeChat({ chatId, currentUserId, otherParticipantId }: U
     }
   }, [chatId, currentUserId, otherParticipantId, markMessageAsRead]);
 
-  // Update user presence
+  // Update user presence using direct doc and server timestamps
   const updatePresence = useCallback(async (isOnline: boolean) => {
-    if (!currentUserId || currentUserId.trim() === '' || !chatId || !otherParticipantId) {
-      console.warn('currentUserId is empty, skipping presence update');
+    if (!currentUserId || currentUserId.trim() === '') {
       return;
     }
-    
     try {
-      const qUser = query(collection(db, 'user_profiles'), where('id', '==', currentUserId));
-      const snap = await getDocs(qUser);
-      const docId = snap.docs[0]?.id;
-      if (docId) await updateDoc(doc(db, 'user_profiles', docId), { is_online: isOnline, last_seen: new Date().toISOString() });
+      const meRef = doc(db, 'user_profiles', currentUserId);
+      await setDoc(meRef, { is_online: isOnline, last_seen: serverTimestamp() }, { merge: true });
     } catch (error) {
       console.error('Error updating presence:', error);
     }
-  }, [currentUserId, chatId, otherParticipantId]);
+  }, [currentUserId]);
 
   // Setup real-time subscriptions
   useEffect(() => {
-    if (!chatId || !currentUserId || !otherParticipantId) {
-      return;
-    }
+    if (!chatId) { return; }
 
     const unsubMessages = onSnapshot(
       query(collection(db, 'messages'), where('chat_id', '==', chatId), orderBy('created_at', 'asc')),
       (snapshot) => {
         snapshot.docChanges().forEach(change => {
-          const msg = { id: change.doc.id, ...change.doc.data() } as unknown as Message;
+          const raw: any = change.doc.data();
+          const created = (raw.created_at && typeof (raw.created_at as any).toDate === 'function')
+            ? (raw.created_at as any).toDate().toISOString()
+            : (raw.created_at || new Date().toISOString());
+          const msg = { id: change.doc.id, ...raw, created_at: created } as unknown as Message;
           if (change.type === 'added') {
             setMessages(prev => {
               if (prev.some(m => m.id === msg.id)) return prev;
@@ -417,9 +436,11 @@ export function useRealtimeChat({ chatId, currentUserId, otherParticipantId }: U
               saveMessagesToCache(next);
               return next;
             });
-            if (msg.sender_id !== currentUserId) {
-              setTimeout(() => markMessageAsRead(msg.id), 1000);
+            if (currentUserId && otherParticipantId && msg.sender_id !== currentUserId) {
+              // Mark delivered immediately
               updateDoc(doc(db, 'messages', msg.id), { delivered_to: arrayUnion(currentUserId) }).catch(() => {});
+              // Mark read after short delay (active chat behavior)
+              setTimeout(() => markMessageAsRead(msg.id), 800);
             }
           } else if (change.type === 'modified') {
             setMessages(prev => {
@@ -432,38 +453,57 @@ export function useRealtimeChat({ chatId, currentUserId, otherParticipantId }: U
       }
     );
 
-    // Typing indicators subscription
+    // Typing indicators subscription using direct username from profile doc
     const unsubTyping = onSnapshot(
       query(collection(db, 'typing_indicators'), where('chat_id', '==', chatId)),
       async (snapshot) => {
-        snapshot.docChanges().forEach(async change => {
+        for (const change of snapshot.docChanges()) {
           const typingData: any = change.doc.data();
-          if (typingData.user_id === currentUserId) return;
-          const profileSnap = await getDocs(query(collection(db, 'user_profiles'), where('id', '==', typingData.user_id)));
-          const username = profileSnap.docs[0]?.data()?.username || 'User';
+          if (typingData.user_id === currentUserId) continue;
+          let username = usernameCacheRef.current[typingData.user_id];
+          if (!username) {
+            try {
+              const profileDoc = await getDoc(doc(db, 'user_profiles', typingData.user_id));
+              if (profileDoc.exists()) {
+                const pdata: any = profileDoc.data();
+                username = pdata.username || pdata.phone || 'User';
+                usernameCacheRef.current[typingData.user_id] = username;
+              }
+            } catch {}
+          }
+          if (!username) username = 'User';
           setTypingUsers(prev => {
             const filtered = prev.filter(u => u.user_id !== typingData.user_id);
             if (typingData.is_typing) {
-              return [...filtered, { user_id: typingData.user_id, username, is_typing: true, updated_at: typingData.updated_at }];
+              const updatedAt = (typingData.updated_at && typeof (typingData.updated_at as any).toDate === 'function')
+                ? (typingData.updated_at as any).toDate().toISOString()
+                : (typingData.updated_at || new Date().toISOString());
+              return [...filtered, { user_id: typingData.user_id, username, is_typing: true, updated_at: updatedAt }];
             }
             return filtered;
           });
-        });
+        }
       }
     );
 
-    // User presence subscription
-    const unsubPresence = onSnapshot(
-      query(collection(db, 'user_profiles'), where('id', '==', otherParticipantId)),
-      (snapshot) => {
-        snapshot.forEach(docSnap => {
-          const updatedProfile: any = docSnap.data();
-          setOtherUserPresence({ user_id: updatedProfile.id, is_online: !!updatedProfile.is_online, last_seen: updatedProfile.last_seen || new Date().toISOString() });
-        });
-      }
-    );
+    // User presence subscription (guard otherParticipantId)
+    let unsubPresence: (() => void) | undefined;
+    if (otherParticipantId && otherParticipantId.trim() !== '') {
+      unsubPresence = onSnapshot(
+        doc(db, 'user_profiles', otherParticipantId),
+        (docSnap) => {
+          const updatedProfile: any = docSnap.exists() ? docSnap.data() : null;
+          if (updatedProfile) {
+            const normalizedLastSeen = (updatedProfile.last_seen && typeof (updatedProfile.last_seen as any).toDate === 'function')
+              ? (updatedProfile.last_seen as any).toDate().toISOString()
+              : (updatedProfile.last_seen || new Date().toISOString());
+            setOtherUserPresence({ user_id: otherParticipantId, is_online: !!updatedProfile.is_online, last_seen: normalizedLastSeen });
+          }
+        }
+      );
+    }
 
-    channelsRef.current = [unsubMessages, unsubTyping, unsubPresence];
+    channelsRef.current = [unsubMessages, unsubTyping, unsubPresence as any].filter(Boolean) as any;
 
     // Cleanup function
     return () => {
@@ -479,18 +519,23 @@ export function useRealtimeChat({ chatId, currentUserId, otherParticipantId }: U
   // Load initial data
   useEffect(() => {
     loadMessages();
-    loadUserPresence();
-    loadUnreadCount();
+    if (currentUserId && otherParticipantId) {
+      loadUserPresence();
+      loadUnreadCount();
+    }
     // Try flushing queued messages for this chat in the background
     (async () => {
       const queued = await getQueuedMessages();
       for (const q of queued.filter(q => q.chat_id === chatId)) {
         try {
-          await supabase.from('messages').insert({
+          await addDoc(collection(db, 'messages'), {
             chat_id: q.chat_id,
             sender_id: q.sender_id,
             content: q.content,
             message_type: q.message_type,
+            created_at: serverTimestamp(),
+            read_by: [],
+            delivered_to: [],
           });
           await removeFromQueueByClientId(q.client_id || q.id);
         } catch {}
@@ -499,39 +544,7 @@ export function useRealtimeChat({ chatId, currentUserId, otherParticipantId }: U
   }, [loadMessages, loadUserPresence, loadUnreadCount]);
 
   // ADDED: 1-second polling fallback to ensure near-real-time updates
-  useEffect(() => {
-    if (!chatId) return;
-    const interval = setInterval(async () => {
-      try {
-        // Determine last known message timestamp
-        const lastLocal = messages.length > 0
-          ? messages[messages.length - 1].created_at
-          : lastFetchedAtRef.current || '1970-01-01T00:00:00.000Z';
-
-        const { data, error } = await supabase
-          .from('messages')
-          .select('*')
-          .eq('chat_id', chatId)
-          .gt('created_at', lastLocal)
-          .order('created_at', { ascending: true });
-
-        if (!error && data && data.length > 0) {
-          setMessages(prev => {
-            const merged = [...prev];
-            for (const msg of data as Message[]) {
-              if (!merged.some(m => m.id === msg.id)) {
-                merged.push(msg);
-              }
-            }
-            saveMessagesToCache(merged);
-            return merged;
-          });
-          lastFetchedAtRef.current = (data as Message[])[(data as Message[]).length - 1].created_at;
-        }
-      } catch {}
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [chatId, messages, saveMessagesToCache]);
+  // Removed Supabase polling fallback
 
   // ADDED: Periodic queue flush
   useEffect(() => {
@@ -540,20 +553,27 @@ export function useRealtimeChat({ chatId, currentUserId, otherParticipantId }: U
       const queued = await getQueuedMessages();
       for (const q of queued.filter(q => q.chat_id === chatId)) {
         try {
-          const { data, error } = await supabase.from('messages').insert({
+          const added = await addDoc(collection(db, 'messages'), {
             chat_id: q.chat_id,
             sender_id: q.sender_id,
             content: q.content,
             message_type: q.message_type,
-          }).select().single();
-          if (!error && data) {
-            // Replace local queued message with server one
-            setMessages(prev => prev.map(m => (m.client_id && (m.client_id === (q.client_id || q.id))) ? { ...data, client_id: m.client_id, status: 'sent' } as Message : m));
-            await removeFromQueueByClientId(q.client_id || q.id);
-            // Refresh cache
-            const { data: fresh } = await supabase.from('messages').select('*').eq('chat_id', chatId).order('created_at', { ascending: true });
-            if (fresh) saveMessagesToCache(fresh as Message[]);
-          }
+            created_at: serverTimestamp(),
+            read_by: [],
+            delivered_to: [],
+          });
+          setMessages(prev => prev.map(m => (m.client_id && (m.client_id === (q.client_id || q.id))) ? { ...m, id: added.id, status: 'sent' } as Message : m));
+          await removeFromQueueByClientId(q.client_id || q.id);
+          // Refresh cache
+          const snap = await getDocs(query(collection(db, 'messages'), where('chat_id', '==', chatId), orderBy('created_at', 'asc')));
+          const fresh = snap.docs.map(d => {
+            const data: any = d.data();
+            const created = (data.created_at && typeof (data.created_at as any).toDate === 'function')
+              ? (data.created_at as any).toDate().toISOString()
+              : (data.created_at || new Date().toISOString());
+            return { id: d.id, ...data, created_at: created } as Message;
+          });
+          if (fresh) saveMessagesToCache(fresh);
         } catch {}
       }
     }, 10000);
@@ -607,7 +627,7 @@ export function useRealtimeChat({ chatId, currentUserId, otherParticipantId }: U
   }, [sendTypingIndicator, chatId, currentUserId, otherParticipantId]);
 
   // Return early if parameters are invalid (after all hooks are declared)
-  if (!chatId || !currentUserId || !otherParticipantId) {
+  if (!chatId) {
     return {
       messages: [],
       typingUsers: [],
