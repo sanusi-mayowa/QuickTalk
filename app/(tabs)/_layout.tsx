@@ -1,8 +1,10 @@
-import { Tabs } from "expo-router";
 import { Feather } from "@expo/vector-icons";
+import { Tabs } from "expo-router";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function TabLayout() {
   return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: "#3A805B" }} edges={["bottom"]}>
     <Tabs
       screenOptions={{
         headerShown: false,
@@ -12,15 +14,19 @@ export default function TabLayout() {
           backgroundColor: "#3A805B",
           borderTopWidth: 1,
           borderTopColor: "#EFEFEF",
-          // minHeight: 106,
-          paddingTop: 6,
-          justifyContent: "center",
+          height: 70,
+          position: "absolute",
+          paddingTop: 8,
+          paddingBottom: 10,
         },
         tabBarLabelStyle: {
           fontSize: 12,
-          marginTop: 2,
           fontWeight: "500",
-          color: "white",
+          marginTop: 2,
+        },
+        tabBarItemStyle: {
+          justifyContent: "center",
+          alignItems: "center",
         },
       }}
     >
@@ -52,5 +58,6 @@ export default function TabLayout() {
         }}
       />
     </Tabs>
+    </SafeAreaView>
   );
 }

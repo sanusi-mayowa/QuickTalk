@@ -14,6 +14,8 @@ import {
 import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import { auth, db } from "@/lib/firebase";
+import { useTheme, ThemeMode } from "@/lib/theme";
+import { useOffline } from "@/hooks/useOffline";
 import { signOut } from "firebase/auth";
 import { collection, getDocs, query, where } from "firebase/firestore";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -29,6 +31,8 @@ interface UserProfile {
 
 export default function SettingsScreen() {
   const router = useRouter();
+  const { theme, mode, setMode } = useTheme();
+  const { syncStatus, syncOfflineData, clearFailedItems } = useOffline();
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -41,7 +45,10 @@ export default function SettingsScreen() {
       const user = auth.currentUser;
       if (!user) return;
 
-      const q = query(collection(db, "user_profiles"), where("auth_user_id", "==", user.uid));
+      const q = query(
+        collection(db, "user_profiles"),
+        where("auth_user_id", "==", user.uid)
+      );
       const snap = await getDocs(q);
       const userProfile = snap.docs[0]?.data() as UserProfile | undefined;
       if (userProfile) setProfile(userProfile);
@@ -93,20 +100,31 @@ export default function SettingsScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="#3A805B" />
+    <SafeAreaView
+      style={[styles.container, { backgroundColor: theme.colors.background }]}
+    >
+      <StatusBar
+        barStyle={theme.mode === "dark" ? "light-content" : "dark-content"}
+        backgroundColor={theme.colors.primary}
+      />
 
       {/* Header */}
-      <View style={styles.header}>
+      <View style={[styles.header, { backgroundColor: theme.colors.primary }]}>
         <TouchableOpacity
-          onPress={() => router.push('/(tabs)')}
+          onPress={() => router.push("/(tabs)")}
           style={styles.headerIcon}
         >
-          <Feather name="chevron-left" size={24} color="#fff" />
+          <Feather
+            name="chevron-left"
+            size={24}
+            color={theme.colors.primaryText}
+          />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Settings</Text>
+        <Text style={[styles.headerTitle, { color: theme.colors.primaryText }]}>
+          Settings
+        </Text>
         <TouchableOpacity style={styles.headerIcon}>
-          <Feather name="search" size={24} color="#fff" />
+          <Feather name="search" size={24} color={theme.colors.primaryText} />
         </TouchableOpacity>
       </View>
 
@@ -115,7 +133,12 @@ export default function SettingsScreen() {
         <ScrollView contentContainerStyle={styles.content}>
           {/* Profile Section */}
           {profile && (
-            <View style={styles.profileSection}>
+            <View
+              style={[
+                styles.profileSection,
+                { backgroundColor: theme.colors.surface },
+              ]}
+            >
               <View style={styles.profileInfo}>
                 <View style={styles.avatarContainer}>
                   {profile.profile_picture_data ? (
@@ -131,61 +154,316 @@ export default function SettingsScreen() {
                 </View>
 
                 <View style={styles.profileDetails}>
-                  <Text style={styles.username}>{profile.username}</Text>
-                  <Text style={styles.about} numberOfLines={2}>
+                  <Text style={[styles.username, { color: theme.colors.text }]}>
+                    {profile.username}
+                  </Text>
+                  <Text
+                    style={[styles.about, { color: theme.colors.mutedText }]}
+                    numberOfLines={2}
+                  >
                     {profile.about}
                   </Text>
-                  <Text style={styles.contactInfo}>{profile.email}</Text>
-                  <Text style={styles.contactInfo}>{profile.phone}</Text>
+                  <Text
+                    style={[
+                      styles.contactInfo,
+                      { color: theme.colors.mutedText },
+                    ]}
+                  >
+                    {profile.email}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.contactInfo,
+                      { color: theme.colors.mutedText },
+                    ]}
+                  >
+                    {profile.phone}
+                  </Text>
                 </View>
               </View>
 
               <TouchableOpacity
-                style={styles.editButton}
+                style={[
+                  styles.editButton,
+                  {
+                    backgroundColor: theme.colors.surface,
+                    borderColor: theme.colors.primary,
+                  },
+                ]}
                 onPress={handleEditProfile}
               >
-                <Feather name="edit" size={16} color="#3A805B" />
-                <Text style={styles.editButtonText}>Edit Profile</Text>
+                <Feather
+                  name="edit"
+                  size={16}
+                  color={theme.colors.primaryText}
+                />
+                <Text
+                  style={[
+                    styles.editButtonText,
+                    { color: theme.colors.primaryText },
+                  ]}
+                >
+                  Edit Profile
+                </Text>
               </TouchableOpacity>
             </View>
           )}
 
           {/* Settings Options */}
-          <View style={styles.settingsSection}>
-            <TouchableOpacity style={styles.settingItem}>
+          <View
+            style={[
+              styles.settingsSection,
+              { backgroundColor: theme.colors.surface },
+            ]}
+          >
+            <View
+              style={[
+                styles.settingItem,
+                { borderBottomColor: theme.colors.border },
+              ]}
+            >
               <View style={styles.settingItemLeft}>
                 <View style={styles.settingIcon}>
-                  <Feather name="bell" size={20} color="#3A805B" />
+                  <Feather name="moon" size={20} color={theme.colors.primary} />
                 </View>
-                <Text style={styles.settingText}>Notifications</Text>
+                <Text
+                  style={[styles.settingText, { color: theme.colors.text }]}
+                >
+                  Theme
+                </Text>
+              </View>
+              <View style={{ flexDirection: "row", gap: 8 }}>
+                {(["light", "dark", "system"] as ThemeMode[]).map((opt) => (
+                  <TouchableOpacity
+                    key={opt}
+                    style={[
+                      styles.themeChip,
+                      { borderColor: theme.colors.border },
+                      mode === opt && { backgroundColor: theme.colors.primary },
+                    ]}
+                    onPress={() => setMode(opt)}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: mode === opt }}
+                  >
+                    <Text
+                      style={[
+                        styles.settingText,
+                        mode === opt
+                          ? { color: theme.colors.primaryText }
+                          : { color: theme.colors.text },
+                      ]}
+                    >
+                      {opt[0].toUpperCase() + opt.slice(1)}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+            <TouchableOpacity
+              style={[
+                styles.settingItem,
+                { borderBottomColor: theme.colors.border },
+              ]}
+            >
+              <View style={styles.settingItemLeft}>
+                <View style={styles.settingIcon}>
+                  <Feather name="bell" size={20} color={theme.colors.primary} />
+                </View>
+                <Text
+                  style={[styles.settingText, { color: theme.colors.text }]}
+                >
+                  Notifications
+                </Text>
               </View>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.settingItem}>
+            <TouchableOpacity
+              style={[
+                styles.settingItem,
+                { borderBottomColor: theme.colors.border },
+              ]}
+            >
               <View style={styles.settingItemLeft}>
                 <View style={styles.settingIcon}>
-                  <Feather name="shield" size={20} color="#3A805B" />
+                  <Feather
+                    name="shield"
+                    size={20}
+                    color={theme.colors.primary}
+                  />
                 </View>
-                <Text style={styles.settingText}>Privacy & Security</Text>
+                <Text
+                  style={[styles.settingText, { color: theme.colors.text }]}
+                >
+                  Privacy & Security
+                </Text>
               </View>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.settingItem}>
+            <TouchableOpacity
+              style={[
+                styles.settingItem,
+                { borderBottomColor: theme.colors.border },
+              ]}
+            >
               <View style={styles.settingItemLeft}>
                 <View style={styles.settingIcon}>
-                  <Feather name="help-circle" size={20} color="#3A805B" />
+                  <Feather
+                    name="help-circle"
+                    size={20}
+                    color={theme.colors.primary}
+                  />
                 </View>
-                <Text style={styles.settingText}>Help & Support</Text>
+                <Text
+                  style={[styles.settingText, { color: theme.colors.text }]}
+                >
+                  Help & Support
+                </Text>
               </View>
             </TouchableOpacity>
+            {/* </View> */}
+
+            {/* Offline Sync Status (inline) */}
+            {/* <View style={[styles.settingsSection, { backgroundColor: theme.colors.surface }]}> */}
+            <View
+              style={[
+                styles.settingItem,
+                { borderBottomColor: theme.colors.border },
+              ]}
+            >
+              <View style={styles.settingItemLeft}>
+                <View style={styles.settingIcon}>
+                  <Feather
+                    name={syncStatus.isOnline ? "wifi" : "wifi-off"}
+                    size={20}
+                    color={
+                      syncStatus.isOnline ? theme.colors.primary : "#d32f2f"
+                    }
+                  />
+                </View>
+                <View>
+                  <Text
+                    style={[styles.settingText, { color: theme.colors.text }]}
+                  >
+                    {syncStatus.isOnline ? "Online" : "Offline"}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.syncStatusText,
+                      { color: theme.colors.mutedText },
+                    ]}
+                  >
+                    {syncStatus.isOnline
+                      ? "All changes sync automatically"
+                      : "Changes will sync when online"}
+                  </Text>
+                </View>
+              </View>
+            </View>
+
+            {(syncStatus.pendingMessages > 0 ||
+              syncStatus.pendingContacts > 0 ||
+              syncStatus.pendingUpdates > 0) && (
+              <View
+                style={[
+                  styles.settingItem,
+                  { borderBottomColor: theme.colors.border },
+                ]}
+              >
+                <View style={styles.settingItemLeft}>
+                  <View style={styles.settingIcon}>
+                    <Feather name="clock" size={20} color="#ff9800" />
+                  </View>
+                  <View>
+                    <Text
+                      style={[styles.settingText, { color: theme.colors.text }]}
+                    >
+                      Pending Sync
+                    </Text>
+                    <Text
+                      style={[
+                        styles.syncStatusText,
+                        { color: theme.colors.mutedText },
+                      ]}
+                    >
+                      {syncStatus.pendingMessages > 0 &&
+                        `${syncStatus.pendingMessages} message${
+                          syncStatus.pendingMessages > 1 ? "s" : ""
+                        }`}
+                      {syncStatus.pendingContacts > 0 &&
+                        `${syncStatus.pendingContacts > 0 ? ", " : ""}${
+                          syncStatus.pendingContacts
+                        } contact${syncStatus.pendingContacts > 1 ? "s" : ""}`}
+                      {syncStatus.pendingUpdates > 0 &&
+                        `${syncStatus.pendingUpdates > 0 ? ", " : ""}${
+                          syncStatus.pendingUpdates
+                        } update${syncStatus.pendingUpdates > 1 ? "s" : ""}`}
+                    </Text>
+                  </View>
+                </View>
+                <TouchableOpacity
+                  style={[
+                    styles.syncButton,
+                    { backgroundColor: theme.colors.primary },
+                  ]}
+                  onPress={syncOfflineData}
+                >
+                  <Feather
+                    name="refresh-cw"
+                    size={16}
+                    color={theme.colors.primaryText}
+                  />
+                  <Text
+                    style={[
+                      styles.syncButtonText,
+                      { color: theme.colors.primaryText },
+                    ]}
+                  >
+                    Sync
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {syncStatus.lastSync && (
+              <View style={styles.settingItem}>
+                <View style={styles.settingItemLeft}>
+                  <View style={styles.settingIcon}>
+                    <Feather name="check-circle" size={20} color="#4caf50" />
+                  </View>
+                  <Text
+                    style={[styles.settingText, { color: theme.colors.text }]}
+                  >
+                    Last sync: {new Date(syncStatus.lastSync).toLocaleString()}
+                  </Text>
+                </View>
+              </View>
+            )}
           </View>
         </ScrollView>
 
         {/* Logout Button pinned at bottom */}
         <View style={styles.logoutSection}>
-          <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+          <TouchableOpacity
+            style={[
+              styles.logoutButton,
+              { backgroundColor: theme.colors.surface, borderColor: "#d32f2f" },
+            ]}
+            onPress={handleLogout}
+          >
             <Feather name="log-out" size={20} color="#d32f2f" />
-            <Text style={styles.logoutText}>Logout</Text>
+            <Text
+              style={[
+                styles.logoutText,
+                {
+                  color:
+                    theme.mode === "dark"
+                      ? theme.colors.primaryText
+                      : "#d32f2f",
+                },
+              ]}
+            >
+              Logout
+            </Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -311,14 +589,6 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
     borderRadius: 16,
     marginBottom: 20,
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 3.84,
-    elevation: 5,
   },
   settingItem: {
     flexDirection: "row",
@@ -342,13 +612,37 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginRight: 16,
   },
+  themeChip: {
+    borderWidth: 1,
+    borderRadius: 16,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginLeft: 4,
+  },
   settingText: {
     fontSize: 16,
     color: "#333",
     fontWeight: "500",
   },
+  syncStatusText: {
+    fontSize: 12,
+    color: "#666",
+    marginTop: 2,
+  },
+  syncButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    gap: 4,
+  },
+  syncButtonText: {
+    fontSize: 12,
+    fontWeight: "600",
+  },
   logoutSection: {
-    backgroundColor: "#fff",
+    backgroundColor: "transparent",
     borderTopWidth: 1,
     borderTopColor: "#f0f0f0",
     paddingVertical: 16,
@@ -356,11 +650,6 @@ const styles = StyleSheet.create({
     marginHorizontal: 20,
     borderRadius: 12,
     marginBottom: 30,
-    elevation: 4,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
   },
   logoutButton: {
     flexDirection: "row",

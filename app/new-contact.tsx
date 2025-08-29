@@ -12,13 +12,27 @@ import { useRouter, useLocalSearchParams } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import Toast from "react-native-toast-message";
 import { auth, db } from "@/lib/firebase";
-import { addDoc, collection, getDocs, query, where, doc, getDoc, setDoc } from "firebase/firestore";
+import { useTheme } from "@/lib/theme";
+import { useOffline } from "@/hooks/useOffline";
+import {
+  addDoc,
+  collection,
+  getDocs,
+  query,
+  where,
+  doc,
+  getDoc,
+  setDoc,
+} from "firebase/firestore";
 import PhoneInput from "@/components/PhoneInput";
 import { parsePhoneNumberFromString } from "libphonenumber-js";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function NewContactScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
+  const { theme } = useTheme();
+  const { queueContact, syncStatus } = useOffline();
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [phoneNumber, setPhoneNumber] = useState("");
@@ -26,16 +40,22 @@ export default function NewContactScreen() {
   const [loading, setLoading] = useState(false);
   const [defaultCountryCode, setDefaultCountryCode] = useState<string>("US");
   const [isPrefilled, setIsPrefilled] = useState<boolean>(false);
+  const [prefillAvatar, setPrefillAvatar] = useState<string | null>(null);
+  const [didInitFromParams, setDidInitFromParams] = useState<boolean>(false);
 
   // Prefill from params
   useEffect(() => {
+    if (didInitFromParams) return;
     const prefillPhone = (params?.prefillPhone as string) || "";
     const prefillCountry = (params?.prefillCountry as string) || "";
     const prefillFirstName =
       (params?.prefillFirstName as string) ||
-      (params?.prefillUsername as string) ||"";
+      (params?.prefillUsername as string) ||
+      "";
+    const avatar = (params?.prefillAvatar as string) || "";
 
-    if (prefillFirstName) setFirstName(prefillFirstName);
+    if (prefillFirstName && !firstName) setFirstName(prefillFirstName);
+    if (avatar) setPrefillAvatar(avatar);
 
     if (prefillPhone) {
       setIsPrefilled(true);
@@ -88,8 +108,17 @@ export default function NewContactScreen() {
               setDefaultCountryCode(prefillCountry.toUpperCase());
               // Best-effort dial code mapping for common countries
               const countryToDial: Record<string, string> = {
-                US: "+1", CA: "+1", GB: "+44", NG: "+234", IN: "+91",
-                AU: "+61", JP: "+81", KR: "+82", CN: "+86", AE: "+971", IL: "+972"
+                US: "+1",
+                CA: "+1",
+                GB: "+44",
+                NG: "+234",
+                IN: "+91",
+                AU: "+61",
+                JP: "+81",
+                KR: "+82",
+                CN: "+86",
+                AE: "+971",
+                IL: "+972",
               };
               const dial = countryToDial[prefillCountry.toUpperCase()] || "+";
               const national = prefillPhone.replace(/\D/g, "");
@@ -103,7 +132,8 @@ export default function NewContactScreen() {
         if (prefillCountry) setDefaultCountryCode(prefillCountry.toUpperCase());
       }
     }
-  }, [params]);
+    setDidInitFromParams(true);
+  }, [params, didInitFromParams, firstName]);
 
   const handleSave = async () => {
     if (!firstName.trim() || !phoneNumber.trim()) {
@@ -130,6 +160,38 @@ export default function NewContactScreen() {
       const user = auth.currentUser;
       if (!user) throw new Error("No active session");
 
+      // Check if we're offline
+      const isOffline = !syncStatus.isOnline;
+
+      if (isOffline) {
+        // Queue contact for offline saving
+        const displayName = `${firstName.trim()} ${lastName.trim()}`.trim();
+        await queueContact(
+          displayName,
+          firstName.trim(),
+          lastName.trim(),
+          formattedPhone,
+          false, // We'll determine this when syncing
+          undefined,
+          prefillAvatar || undefined
+        );
+
+        Toast.show({
+          type: "info",
+          text1: "Contact Queued",
+          text2: "Contact will be saved when you're back online",
+        });
+
+        // Reset form
+        setFirstName("");
+        setLastName("");
+        setPhoneNumber("");
+        setFormattedPhone("");
+        router.replace("/select-contact");
+        return;
+      }
+
+      // Online flow - proceed with normal saving
       // Get current user profile
       const userSnap = await getDocs(
         query(
@@ -146,16 +208,27 @@ export default function NewContactScreen() {
 
       // Determine if this phone belongs to a QuickTalk user
       const quicktalkSnap = await getDocs(
-        query(collection(db, "user_profiles"), where("phone", "==", formattedPhone))
+        query(
+          collection(db, "user_profiles"),
+          where("phone", "==", formattedPhone)
+        )
       );
       const quicktalkUserExists = !quicktalkSnap.empty;
-      const linkedProfileId = quicktalkUserExists ? quicktalkSnap.docs[0].id : null;
+      const linkedProfileId = quicktalkUserExists
+        ? quicktalkSnap.docs[0].id
+        : null;
 
       // Use stable doc id: linked profile id if present, otherwise E.164 phone
       const contactDocId = linkedProfileId || formattedPhone;
 
       // Prevent duplicate by checking deterministic path
-      const contactDocRef = doc(db, "user_profiles", currentUserProfile.id, "contacts", contactDocId);
+      const contactDocRef = doc(
+        db,
+        "user_profiles",
+        currentUserProfile.id,
+        "contacts",
+        contactDocId
+      );
       const existingDoc = await getDoc(contactDocRef);
       if (existingDoc.exists()) {
         Toast.show({
@@ -168,27 +241,31 @@ export default function NewContactScreen() {
       }
 
       // Save contact to subcollection to satisfy rules
-      await setDoc(contactDocRef, {
-        // Required by rules
-        ownerProfileId: currentUserProfile.id,
-        ownerAuthUid: user.uid,
-        contactProfileId: contactDocId,
-        // Display info
-        displayName: `${firstName.trim()} ${lastName.trim()}`.trim(),
-        first_name: firstName.trim(),
-        last_name: lastName.trim() || null,
-        phone: formattedPhone,
-        // QuickTalk linking
-        is_quicktalk_user: quicktalkUserExists,
-        contact_user_id: linkedProfileId,
-        created_at: new Date().toISOString(),
-      }, { merge: true });
+      await setDoc(
+        contactDocRef,
+        {
+          // Required by rules
+          ownerProfileId: currentUserProfile.id,
+          ownerAuthUid: user.uid,
+          contactProfileId: contactDocId,
+          // Display info
+          displayName: `${firstName.trim()} ${lastName.trim()}`.trim(),
+          first_name: firstName.trim(),
+          last_name: lastName.trim() || null,
+          phone: formattedPhone,
+          // Avatar (if we have it)
+          profile_picture_url: prefillAvatar || null,
+          // QuickTalk linking
+          is_quicktalk_user: quicktalkUserExists,
+          contact_user_id: linkedProfileId,
+          created_at: new Date().toISOString(),
+        },
+        { merge: true }
+      );
 
       Toast.show({
         type: quicktalkUserExists ? "success" : "info",
-        text1: quicktalkUserExists
-          ? "QuickTalk User Found!"
-          : "Contact Saved",
+        text1: quicktalkUserExists ? "QuickTalk User Found!" : "Contact Saved",
         text2: quicktalkUserExists
           ? `${firstName} is on QuickTalk. You can now send messages!`
           : `${firstName} has been added. They're not on QuickTalk yet.`,
@@ -213,77 +290,149 @@ export default function NewContactScreen() {
   };
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={() => router.replace("/select-contact")}
+    <SafeAreaView style={{ flex: 1, backgroundColor: "#3A805B" }}>
+      <View
+        style={[styles.container, { backgroundColor: theme.colors.background }]}
+      >
+        <View
+          style={[styles.header, { backgroundColor: theme.colors.primary }]}
         >
-          <Feather name="chevron-left" size={22} color="#fff" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>New Contact</Text>
-      </View>
-
-      <ScrollView style={styles.content} keyboardShouldPersistTaps="handled">
-        <View style={styles.formSection}>
-          {/* First Name */}
-          <Text style={styles.label}>First Name</Text>
-          <TextInput
-            style={[styles.input, firstName && styles.inputActive]}
-            placeholder="Enter first name"
-            placeholderTextColor="#999"
-            value={firstName}
-            onChangeText={setFirstName}
-          />
-
-          {/* Last Name */}
-          <Text style={styles.label}>Last Name</Text>
-          <TextInput
-            style={[styles.input, lastName && styles.inputActive]}
-            placeholder="Enter last name"
-            placeholderTextColor="#999"
-            value={lastName}
-            onChangeText={setLastName}
-          />
-
-          {/* Phone Number */}
-          <Text style={styles.label}>Phone Number</Text>
-          {isPrefilled ? (
-            <TextInput
-              style={[styles.input, styles.inputDisabled]}
-              value={formattedPhone || phoneNumber}
-              editable={false}
-              selectTextOnFocus={false}
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={() => router.replace("/select-contact")}
+          >
+            <Feather
+              name="chevron-left"
+              size={22}
+              color={theme.colors.primaryText}
             />
-          ) : (
-            <PhoneInput
-              key={defaultCountryCode}
-              value={phoneNumber}
-              onChangeText={setPhoneNumber}
-              onChangeFormattedText={setFormattedPhone}
-              placeholder="Enter phone number"
-              defaultCode={defaultCountryCode}
-              containerStyle={styles.phoneInputContainer}
-              textInputStyle={{ color: "#000" }}
-            />
-          )}
+          </TouchableOpacity>
+          <Text
+            style={[styles.headerTitle, { color: theme.colors.primaryText }]}
+          >
+            New Contact
+          </Text>
         </View>
-      </ScrollView>
 
-      <View style={styles.footer}>
-        <TouchableOpacity
-          style={[styles.saveButton, loading && { opacity: 0.6 }]}
-          onPress={handleSave}
-          disabled={loading}
+        <ScrollView
+          style={[styles.content, { backgroundColor: theme.colors.surface }]}
+          keyboardShouldPersistTaps="handled"
         >
-          {loading ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.saveButtonText}>Save Contact</Text>
-          )}
-        </TouchableOpacity>
+          <View style={styles.formSection}>
+            {/* First Name */}
+            <Text style={[styles.label, { color: theme.colors.primary }]}>
+              First Name
+            </Text>
+            <TextInput
+              style={[
+                styles.input,
+                {
+                  backgroundColor: theme.colors.inputBg,
+                  color: theme.colors.text,
+                  borderColor: "#ccc",
+                },
+                firstName && styles.inputActive,
+              ]}
+              placeholder="Enter first name"
+              placeholderTextColor={theme.colors.mutedText}
+              value={firstName}
+              onChangeText={setFirstName}
+            />
+
+            {/* Last Name */}
+            <Text style={[styles.label, { color: theme.colors.primary }]}>
+              Last Name
+            </Text>
+            <TextInput
+              style={[
+                styles.input,
+                {
+                  backgroundColor: theme.colors.inputBg,
+                  color: theme.colors.text,
+                  borderColor: "#ccc",
+                },
+                lastName && styles.inputActive,
+              ]}
+              placeholder="Enter last name"
+              placeholderTextColor={theme.colors.mutedText}
+              value={lastName}
+              onChangeText={setLastName}
+            />
+
+            {/* Phone Number */}
+            <Text style={[styles.label, { color: theme.colors.primary }]}>
+              Phone Number
+            </Text>
+            {isPrefilled ? (
+              <TextInput
+                style={[
+                  styles.input,
+                  styles.inputDisabled,
+                  {
+                    backgroundColor: theme.colors.inputBg,
+                    color: theme.colors.text,
+                    borderColor: "#ccc",
+                  },
+                ]}
+                value={formattedPhone || phoneNumber}
+                editable={false}
+                selectTextOnFocus={false}
+              />
+            ) : (
+              <PhoneInput
+                key={defaultCountryCode}
+                value={phoneNumber}
+                onChangeText={setPhoneNumber}
+                onChangeFormattedText={setFormattedPhone}
+                placeholder="Enter phone number"
+                defaultCode={defaultCountryCode}
+                containerStyle={[
+                  styles.phoneInputContainer,
+                  {
+                    backgroundColor: theme.colors.inputBg,
+                    borderColor: "#ccc",
+                  },
+                ]}
+                textInputStyle={{ color: theme.colors.text }}
+              />
+            )}
+          </View>
+        </ScrollView>
+
+        <View
+          style={[
+            styles.footer,
+            {
+              backgroundColor: theme.colors.surface,
+              borderColor: theme.colors.border,
+            },
+          ]}
+        >
+          <TouchableOpacity
+            style={[
+              styles.saveButton,
+              { backgroundColor: theme.colors.primary },
+              loading && { opacity: 0.6 },
+            ]}
+            onPress={handleSave}
+            disabled={loading}
+          >
+            {loading ? (
+              <ActivityIndicator color={theme.colors.primaryText} />
+            ) : (
+              <Text
+                style={[
+                  styles.saveButtonText,
+                  { color: theme.colors.primaryText },
+                ]}
+              >
+                Save Contact
+              </Text>
+            )}
+          </TouchableOpacity>
+        </View>
       </View>
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -295,7 +444,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#3A805B",
     paddingHorizontal: 16,
     paddingVertical: 18,
-    paddingTop: 40,
+    paddingTop: 20,
   },
   backButton: { marginRight: 16 },
   headerTitle: { fontSize: 20, fontWeight: "600", color: "#fff" },
@@ -341,7 +490,6 @@ const styles = StyleSheet.create({
     borderRadius: 30,
     paddingVertical: 16,
     alignItems: "center",
-    marginBottom: 20,
   },
   saveButtonText: { color: "#fff", fontSize: 16, fontWeight: "600" },
 });

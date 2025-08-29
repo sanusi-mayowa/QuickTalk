@@ -10,6 +10,7 @@ import {
   KeyboardAvoidingView,
   ActivityIndicator,
   StyleSheet,
+  SafeAreaView,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
@@ -71,11 +72,14 @@ export default function SignupScreen() {
     setLoading(true);
 
     try {
-      const response = await fetch("https://quicktalk-backend-m3aq.onrender.com/signup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, phone: formattedPhone, password }),
-      });
+      const response = await fetch(
+        "https://quicktalk-backend-m3aq.onrender.com/signup",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, phone: formattedPhone, password }),
+        }
+      );
 
       const data = await response.json();
 
@@ -119,163 +123,166 @@ export default function SignupScreen() {
     }
   };
 
-
   return (
-    <View style={styles.container}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        style={styles.keyboardAvoidingView}
-      >
-        <ScrollView
-          contentContainerStyle={styles.scrollView}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="on-drag"
+    <SafeAreaView style={{ flex: 1, backgroundColor: "#3A805B" }}>
+      <View style={styles.container}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          style={styles.keyboardAvoidingView}
         >
-          <View style={styles.logoContainer}>
-            <Image
-              source={require("../../assets/images/logo.png")}
-              style={styles.logo}
-            />
-          </View>
-
-          <View style={styles.headerContainer}>
-            <Text style={styles.headerTitle}>Create Account</Text>
-            <Text style={styles.headerSubtitle}>
-              Join QuickTalk and start connecting
-            </Text>
-          </View>
-          
-          <View style={styles.formContainer}>
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>Email Address</Text>
-              <TextInput
-                blurOnSubmit={true}
-                style={styles.textInput}
-                placeholder="johndoe@gmail.com"
-                placeholderTextColor="gray"
-                value={email}
-                onChangeText={setEmail}
-                keyboardType="email-address"
-                autoCapitalize="none"
+          <ScrollView
+            contentContainerStyle={styles.scrollView}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+          >
+            <View style={styles.logoContainer}>
+              <Image
+                source={require("../../assets/images/logo.png")}
+                style={styles.logo}
               />
-              {email.length > 0 && (
-                <Text
-                  style={{
-                    color: isEmailValid ? "#4CAF50" : "#FF5252",
-                    marginTop: 4,
-                  }}
-                >
-                  {isEmailValid
-                    ? "✓ Valid email address"
-                    : "✗ Enter a valid email"}
-                </Text>
-              )}
             </View>
 
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>Phone Number</Text>
-              <PhoneInput
-                value={phone}
-                onChangeText={setPhone}
-                onChangeFormattedText={setFormattedPhone}
-                placeholder="Enter phone number"
-                defaultCode="US"
-                containerStyle={styles.phoneContainer}
-                keyboardType="numeric"
-              />
-              {phone.length > 0 && (
-                <Text
-                  style={{
-                    color: isPhoneValid ? "#4CAF50" : "#FF5252",
-                    marginTop: 4,
-                  }}
-                >
-                  {isPhoneValid
-                    ? "✓ Valid phone number"
-                    : "✗ Enter a valid phone number"}
-                </Text>
-              )}
+            <View style={styles.headerContainer}>
+              <Text style={styles.headerTitle}>Create Account</Text>
+              <Text style={styles.headerSubtitle}>
+                Join QuickTalk and start connecting
+              </Text>
             </View>
 
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>Password</Text>
-              <View style={styles.passwordContainer}>
+            <View style={styles.formContainer}>
+              <View style={styles.inputContainer}>
+                <Text style={styles.label}>Email Address</Text>
                 <TextInput
                   blurOnSubmit={true}
-                  style={styles.passwordInput}
-                  placeholder="Create a strong password"
+                  style={styles.textInput}
+                  placeholder="johndoe@gmail.com"
                   placeholderTextColor="gray"
-                  value={password}
-                  onChangeText={setPassword}
-                  secureTextEntry={!showPassword}
+                  value={email}
+                  onChangeText={setEmail}
+                  keyboardType="email-address"
                   autoCapitalize="none"
                 />
-                <TouchableOpacity
-                  style={styles.eyeIcon}
-                  onPress={() => setShowPassword(!showPassword)}
-                >
-                  <Feather
-                    name={showPassword ? "eye-off" : "eye"}
-                    size={20}
-                    color="gray"
-                  />
-                </TouchableOpacity>
+                {email.length > 0 && (
+                  <Text
+                    style={{
+                      color: isEmailValid ? "#4CAF50" : "#FF5252",
+                      marginTop: 4,
+                    }}
+                  >
+                    {isEmailValid
+                      ? "✓ Valid email address"
+                      : "✗ Enter a valid email"}
+                  </Text>
+                )}
               </View>
 
-              <View style={styles.guidelines}>
-                <Text
-                  style={{
-                    color: isMinLength ? "#4CAF50" : "rgba(255, 255, 255, 0.7)",
-                    fontSize: 12,
-                  }}
-                >
-                  ✓ Minimum 8 characters
-                </Text>
-                <Text
-                  style={{
-                    color: hasNumber ? "#4CAF50" : "rgba(255, 255, 255, 0.7)",
-                    fontSize: 12,
-                  }}
-                >
-                  ✓ At least one number
-                </Text>
+              <View style={styles.inputContainer}>
+                <Text style={styles.label}>Phone Number</Text>
+                <PhoneInput
+                  value={phone}
+                  onChangeText={setPhone}
+                  onChangeFormattedText={setFormattedPhone}
+                  placeholder="Enter phone number"
+                  defaultCode="US"
+                  containerStyle={styles.phoneContainer}
+                  keyboardType="numeric"
+                />
+                {phone.length > 0 && (
+                  <Text
+                    style={{
+                      color: isPhoneValid ? "#4CAF50" : "#FF5252",
+                      marginTop: 4,
+                    }}
+                  >
+                    {isPhoneValid
+                      ? "✓ Valid phone number"
+                      : "✗ Enter a valid phone number"}
+                  </Text>
+                )}
               </View>
+
+              <View style={styles.inputContainer}>
+                <Text style={styles.label}>Password</Text>
+                <View style={styles.passwordContainer}>
+                  <TextInput
+                    blurOnSubmit={true}
+                    style={styles.passwordInput}
+                    placeholder="Create a strong password"
+                    placeholderTextColor="gray"
+                    value={password}
+                    onChangeText={setPassword}
+                    secureTextEntry={!showPassword}
+                    autoCapitalize="none"
+                  />
+                  <TouchableOpacity
+                    style={styles.eyeIcon}
+                    onPress={() => setShowPassword(!showPassword)}
+                  >
+                    <Feather
+                      name={showPassword ? "eye-off" : "eye"}
+                      size={20}
+                      color="gray"
+                    />
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.guidelines}>
+                  <Text
+                    style={{
+                      color: isMinLength
+                        ? "#4CAF50"
+                        : "rgba(255, 255, 255, 0.7)",
+                      fontSize: 12,
+                    }}
+                  >
+                    ✓ Minimum 8 characters
+                  </Text>
+                  <Text
+                    style={{
+                      color: hasNumber ? "#4CAF50" : "rgba(255, 255, 255, 0.7)",
+                      fontSize: 12,
+                    }}
+                  >
+                    ✓ At least one number
+                  </Text>
+                </View>
+              </View>
+
+              <TouchableOpacity
+                style={[styles.buttonWrapper, loading && styles.buttonDisabled]}
+                onPress={handleSignup}
+                disabled={loading}
+              >
+                <LinearGradient
+                  colors={["#F857A6", "#FF5858"]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.gradient}
+                >
+                  {loading ? (
+                    <View style={styles.loadingContainer}>
+                      <ActivityIndicator color="#fff" size="small" />
+                      <Text style={[styles.buttonText, { marginLeft: 8 }]}>
+                        Creating Account...
+                      </Text>
+                    </View>
+                  ) : (
+                    <Text style={styles.buttonText}>Create Account</Text>
+                  )}
+                </LinearGradient>
+              </TouchableOpacity>
             </View>
 
-            <TouchableOpacity
-              style={[styles.buttonWrapper, loading && styles.buttonDisabled]}
-              onPress={handleSignup}
-              disabled={loading}
-            >
-              <LinearGradient
-                colors={["#F857A6", "#FF5858"]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-                style={styles.gradient}
-              >
-                {loading ? (
-                  <View style={styles.loadingContainer}>
-                    <ActivityIndicator color="#fff" size="small" />
-                    <Text style={[styles.buttonText, { marginLeft: 8 }]}>
-                      Creating Account...
-                    </Text>
-                  </View>
-                ) : (
-                  <Text style={styles.buttonText}>Create Account</Text>
-                )}
-              </LinearGradient>
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.registerContainer}>
-            <Text style={styles.registerText}>Already have an account? </Text>
-            <TouchableOpacity onPress={() => router.push("/(auth)/login")}>
-              <Text style={styles.registerLink}>Sign In</Text>
-            </TouchableOpacity>
-          </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </View>
+            <View style={styles.registerContainer}>
+              <Text style={styles.registerText}>Already have an account? </Text>
+              <TouchableOpacity onPress={() => router.push("/(auth)/login")}>
+                <Text style={styles.registerLink}>Sign In</Text>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </View>
+    </SafeAreaView>
   );
 }
 

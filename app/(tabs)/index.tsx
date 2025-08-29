@@ -12,7 +12,7 @@ import {
   Pressable,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { AppState } from 'react-native';
+import { AppState, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { auth, db, FirebaseService } from '@/lib/firebase';
@@ -20,6 +20,9 @@ import { collection, doc, getDoc, getDocs, onSnapshot, orderBy, query, where, li
 import Toast from 'react-native-toast-message';
 import { Feather } from '@expo/vector-icons';
 import { TypingUser } from '@/hooks/useRealtimeChat';
+import { useTheme } from '@/lib/theme';
+import { useOffline } from '@/hooks/useOffline';
+import OfflineIndicator from '@/components/OfflineIndicator';
 
 // Prefetch helper for expo-router
 const useRoutePrefetch = (router: any) => {
@@ -73,6 +76,9 @@ export default function HomeScreen() {
   const router = useRouter();
   const prefetch = useRoutePrefetch(router);
   const insets = useSafeAreaInsets();
+  const { theme } = useTheme();
+  const { width, height, fontScale } = useWindowDimensions();
+  const { syncStatus } = useOffline();
   const [chats, setChats] = useState<Chat[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearchBar, setShowSearchBar] = useState(false);
@@ -430,11 +436,22 @@ export default function HomeScreen() {
           participantData.profile_picture_url = participantData.profile_picture_url || participantData.profile_picture_data || null;
         }
 
-        const contactSnap = await getDocs(query(
-          collection(db, 'user_profiles', currentUserProfileWithId.id, 'contacts'),
-          where('contact_user_id', '==', otherParticipantId)
-        ));
-        const contactData = contactSnap.docs[0]?.data() as any | undefined;
+        // Try to find a saved contact for this participant. Prefer explicit linkage, then fallback to phone match.
+        let contactData: any | undefined;
+        try {
+          const contactByIdSnap = await getDocs(query(
+            collection(db, 'user_profiles', currentUserProfileWithId.id, 'contacts'),
+            where('contact_user_id', '==', otherParticipantId)
+          ));
+          contactData = contactByIdSnap.docs[0]?.data() as any | undefined;
+          if (!contactData && participantData?.phone) {
+            const contactByPhoneSnap = await getDocs(query(
+              collection(db, 'user_profiles', currentUserProfileWithId.id, 'contacts'),
+              where('phone', '==', participantData.phone)
+            ));
+            contactData = contactByPhoneSnap.docs[0]?.data() as any | undefined;
+          }
+        } catch {}
 
         // Get last message by query
         const lastMsgSnap = await getDocs(query(
@@ -444,6 +461,16 @@ export default function HomeScreen() {
           limit(1)
         ));
         const lastMessage = lastMsgSnap.docs[0]?.data() as any | undefined;
+        // Normalize last message timestamp (supports both 'timestamp' and 'created_at')
+        let lastMessageIso: string | null = null;
+        if (lastMessage) {
+          const ts = lastMessage.timestamp;
+          const ca = lastMessage.created_at;
+          if (ts && typeof ts.toDate === 'function') lastMessageIso = ts.toDate().toISOString();
+          else if (typeof ts === 'string') lastMessageIso = ts;
+          else if (ca && typeof ca.toDate === 'function') lastMessageIso = ca.toDate().toISOString();
+          else if (typeof ca === 'string') lastMessageIso = ca;
+        }
 
         let messageStatus = { isRead: false, isDelivered: false, isSent: false };
         if (lastMessage && lastMessage.senderId === currentUserProfileWithId.id) {
@@ -474,9 +501,9 @@ export default function HomeScreen() {
               }
             : { first_name: '', last_name: '', is_saved: false },
           lastMessage: lastMessage?.content || 'No messages yet',
-          lastMessageTime: lastMessage?.created_at ? formatMessageTime(lastMessage.created_at) : formatMessageTime(chat.created_at || new Date().toISOString()),
+          lastMessageTime: lastMessageIso ? formatMessageTime(lastMessageIso) : formatMessageTime(chat.created_at || chat.createdAt || chat.timestamp || new Date().toISOString()),
           lastMessageId: lastMessage?.id || '',
-          lastMessageSenderId: lastMessage?.sender_id || '',
+          lastMessageSenderId: lastMessage?.sender_id || lastMessage?.senderId || '',
           lastMessageStatus: messageStatus,
           lastMessageReactions: lastMessage?.reactions || undefined,
           unreadCount,
@@ -519,25 +546,15 @@ export default function HomeScreen() {
   const formatMessageTime = (timestamp: string) => {
     const date = new Date(timestamp);
     const now = new Date();
-    const diffInMinutes = Math.floor((now.getTime() - date.getTime()) / (1000 * 60));
-    
-    if (diffInMinutes < 1) {
-      return 'Just now';
-    } else if (diffInMinutes < 60) {
-      return `${diffInMinutes} min ago`;
-    } else if (diffInMinutes < 1440) {
-      const hours = Math.floor(diffInMinutes / 60);
-      return `${hours} hour${hours > 1 ? 's' : ''} ago`;
-    } else {
-      const days = Math.floor(diffInMinutes / 1440);
-      if (days === 1) {
-        return 'Yesterday';
-      } else if (days < 7) {
-        return `${days} days ago`;
-      } else {
-        return date.toLocaleDateString();
-      }
+    const isSameDay = date.toDateString() === now.toDateString();
+    if (isSameDay) {
+      return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     }
+    const yesterday = new Date(now);
+    yesterday.setDate(now.getDate() - 1);
+    const isYesterday = date.toDateString() === yesterday.toDateString();
+    if (isYesterday) return 'Yesterday';
+    return date.toLocaleDateString();
   };
 
   const onRefresh = () => {
@@ -630,12 +647,12 @@ export default function HomeScreen() {
   );
 
   const renderChatItem = ({ item }: { item: Chat }) => (
-    <TouchableOpacity style={styles.chatItem} onPress={() => handleChatPress(item)}>
+    <TouchableOpacity style={[styles.chatItem, { backgroundColor: theme.colors.surface, borderBottomColor: theme.colors.border }]} onPress={() => handleChatPress(item)} accessibilityRole="button" accessibilityLabel={`Open chat with ${getDisplayName(item)}`}>
       <View style={styles.avatarContainer}>
         {item.participant.profile_picture_url ? (
           <Image source={{ uri: item.participant.profile_picture_url }} style={styles.avatar} />
         ) : (
-          <View style={styles.avatarPlaceholder}>
+          <View style={[styles.avatarPlaceholder, { backgroundColor: theme.colors.border }]}>
             <Feather name="user" size={24} color="#666" />
           </View>
         )}
@@ -646,16 +663,16 @@ export default function HomeScreen() {
       <View style={styles.chatContent}>
         <View style={styles.chatHeader}>
           {/* MODIFIED: Show contact name or phone number */}
-          <Text style={styles.username}>{getDisplayName(item)}</Text>
+          <Text style={[styles.username, { color: theme.colors.text }]}>{getDisplayName(item)}</Text>
           <View style={styles.chatMeta}>
             {item.hasUnreadMessages && <View style={styles.unreadDot} />}
-            <Text style={styles.timestamp}>{item.lastMessageTime}</Text>
+            <Text style={[styles.timestamp, { color: theme.colors.mutedText }]}>{item.lastMessageTime}</Text>
           </View>
         </View>
         
         {/* ADDED: Show typing indicator if user is typing in this chat */}
         {typingUsers[item.id] && typingUsers[item.id].length > 0 ? (
-          <Text style={styles.typingIndicator}>
+          <Text style={[styles.typingIndicator, { color: theme.colors.primary }] }>
             {typingUsers[item.id][0].username} is typing...
           </Text>
         ) : (
@@ -664,14 +681,14 @@ export default function HomeScreen() {
               style={[
                 styles.lastMessage,
                 item.hasUnreadMessages && styles.unreadMessage
-              ]} 
+              , { color: theme.colors.mutedText }]}
               numberOfLines={1}
             >
               {item.lastMessage}
             </Text>
             {item.unreadCount > 0 && (
-              <View style={styles.unreadBadge}>
-                <Text style={styles.unreadCount}>
+              <View style={[styles.unreadBadge, { backgroundColor: theme.colors.primary }]}>
+                <Text style={[styles.unreadCount, { color: theme.colors.primaryText }]}>
                   {item.unreadCount > 99 ? '99+' : item.unreadCount}
                 </Text>
               </View>
@@ -708,26 +725,29 @@ export default function HomeScreen() {
   }, [chats, prefetch]);
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: theme.colors.background, minHeight: height, minWidth: width }]}>
       {/* Header */}
       <View style={
-        styles.header
+        [styles.header, { backgroundColor: theme.colors.primary }]
       }>
-        <Text style={styles.title}>QuickTalk</Text>
+        <Text style={[styles.title, { color: theme.colors.primaryText }]}>QuickTalk</Text>
         <View style={styles.headerRight}>
-          <TouchableOpacity style={styles.headerButton} onPress={toggleSearch}>
-            <Feather name="search" size={24} color="#fff" />
+          <TouchableOpacity style={styles.headerButton} onPress={toggleSearch} accessibilityRole="button" accessibilityLabel="Search">
+            <Feather name="search" size={24} color={theme.colors.primaryText} />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.headerButton} onPress={toggleMenu}>
-            <Feather name="more-vertical" size={24} color="#fff" />
+          <TouchableOpacity style={styles.headerButton} onPress={toggleMenu} accessibilityRole="button" accessibilityLabel="Open menu">
+            <Feather name="more-vertical" size={24} color={theme.colors.primaryText} />
           </TouchableOpacity>
         </View>
       </View>
 
+      {/* Offline Indicator */}
+      <OfflineIndicator />
+
       {/* Loading indicator under header while chats load */}
       {loading && (
         <View style={styles.inlineLoading}>
-          <ActivityIndicator size="small" color="#3A805B" />
+          <ActivityIndicator size="small" color={theme.colors.primary} />
           <Text style={styles.inlineLoadingText}>Loading chats...</Text>
         </View>
       )}
@@ -735,15 +755,15 @@ export default function HomeScreen() {
       {/* Dropdown Menu */}
       {menuVisible && (
         <Pressable style={styles.menuOverlay} onPress={() => setMenuVisible(false)}>
-          <View style={styles.menu}>
-            <TouchableOpacity style={styles.menuItem} onPress={() => handleMenuItemPress("/linked-devices")}>
-              <Text style={styles.menuItemText}>Linked Devices</Text>
+          <View style={[styles.menu, { backgroundColor: theme.colors.surface }] }>
+            <TouchableOpacity style={[styles.menuItem, { borderBottomColor: theme.colors.border }]} onPress={() => handleMenuItemPress("/linked-devices")} accessibilityRole="button">
+              <Text style={[styles.menuItemText, { color: theme.colors.text }]}>Linked Devices</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.menuItem} onPress={() => handleMenuItemPress("/new-group")}>
-              <Text style={styles.menuItemText}>New Group</Text>
+            <TouchableOpacity style={[styles.menuItem, { borderBottomColor: theme.colors.border }]} onPress={() => handleMenuItemPress("/new-group")} accessibilityRole="button">
+              <Text style={[styles.menuItemText, { color: theme.colors.text }]}>New Group</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.menuItem} onPress={() => handleMenuItemPress("/settings")}>
-              <Text style={styles.menuItemText}>Settings</Text>
+            <TouchableOpacity style={styles.menuItem} onPress={() => handleMenuItemPress("/settings")} accessibilityRole="button">
+              <Text style={[styles.menuItemText, { color: theme.colors.text }]}>Settings</Text>
             </TouchableOpacity>
           </View>
         </Pressable>
@@ -751,15 +771,16 @@ export default function HomeScreen() {
 
       {/* Search Bar */}
       {showSearchBar && (
-        <View style={styles.searchContainer}>
-          <View style={styles.searchInputContainer}>
-            <Feather name='search' size={20} color="#666" />
+        <View style={[styles.searchContainer, { backgroundColor: theme.colors.surface, borderBottomColor: theme.colors.border }]}>
+          <View style={[styles.searchInputContainer, { backgroundColor: theme.colors.inputBg }]}>
+            <Feather name='search' size={20} color={theme.colors.mutedText} />
             <TextInput
-              style={styles.searchInput}
+              style={[styles.searchInput, { color: theme.colors.text }]}
               placeholder="Search conversations..."
               value={searchQuery}
               onChangeText={setSearchQuery}
-              placeholderTextColor="#999"
+              placeholderTextColor={theme.colors.mutedText}
+              accessibilityLabel="Search conversations"
             />
           </View>
         </View>
@@ -770,7 +791,7 @@ export default function HomeScreen() {
         data={filteredChats}
         renderItem={renderChatItem}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.listContainer}
+        contentContainerStyle={[styles.listContainer, { paddingBottom: Math.max(16, 16 * fontScale) }]}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
@@ -784,7 +805,7 @@ export default function HomeScreen() {
       />
 
       {/* FAB */}
-      <TouchableOpacity style={styles.fab} onPress={handleNewMessage}>
+      <TouchableOpacity style={[styles.fab, { bottom: 100, right: 20 }]} onPress={handleNewMessage}>
         <Feather name='message-circle' size={24} color="#fff" />
       </TouchableOpacity>
     </View>
@@ -914,7 +935,7 @@ const styles = StyleSheet.create({
   },
   fab: {
     position: 'absolute',
-    bottom: 30,
+    // bottom: 30,
     right: 20,
     width: 56,
     height: 56,

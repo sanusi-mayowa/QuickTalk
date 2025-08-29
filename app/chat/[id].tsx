@@ -1,15 +1,18 @@
-import { useEffect, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity, ActivityIndicator, KeyboardAvoidingView, Platform, Image, RefreshControl } from 'react-native';
+import { useEffect, useState, useCallback, useRef } from 'react';
+import { View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity, ActivityIndicator, KeyboardAvoidingView, Platform, Image, RefreshControl, SafeAreaView, } from 'react-native';
+import { useTheme } from '@/lib/theme';
 import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { auth, db } from '@/lib/firebase';
 import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
 import Toast from 'react-native-toast-message';
 import { useSocketChat } from '@/hooks/useSocketChat';
+import { useOffline } from '@/hooks/useOffline';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
 
 export default function ChatScreen() {
+  const { theme } = useTheme();
   const router = useRouter();
   const params = useLocalSearchParams();
   const chatId = params.id as string;
@@ -244,6 +247,8 @@ export default function ChatScreen() {
   }, [chatId, messages]);
 
   const [input, setInput] = useState('');
+  const { queueMessage } = useOffline();
+  const listRef = useRef<FlatList<any>>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -256,9 +261,26 @@ export default function ChatScreen() {
   const onSend = async () => {
     const text = input.trim();
     if (!text) return;
+    
     try {
-      await sendMessage(text);
+      if (isOffline || !isConnected) {
+        // Queue message for offline sending
+        await queueMessage(chatId, text, currentUserProfileId);
+        Toast.show({
+          type: 'info',
+          text1: 'Message Queued',
+          text2: 'Message will be sent when you\'re back online',
+        });
+      } else {
+        // Send immediately if online
+        await sendMessage(text);
+      }
+      
       setInput('');
+      // Scroll to bottom after sending
+      requestAnimationFrame(() => {
+        try { listRef.current?.scrollToEnd({ animated: true }); } catch {}
+      });
     } catch (e: any) {
       Toast.show({ type: 'error', text1: 'Send failed', text2: e?.message || 'Please try again' });
     }
@@ -299,6 +321,13 @@ export default function ChatScreen() {
   };
 
   const renderMessageItem = useCallback(({ item }: { item: any }) => {
+    if (item.__type === 'header') {
+      return (
+        <View style={[styles.dayHeaderContainer, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }] }>
+          <Text style={[styles.dayHeaderText, { color: theme.colors.mutedText }]}>{item.label}</Text>
+        </View>
+      );
+    }
     const isMine = item.senderId === currentUserProfileId;
     const isDelivered = isMine && item.status === 'delivered';
     const isRead = isMine && item.status === 'seen';
@@ -333,9 +362,46 @@ export default function ChatScreen() {
     );
   }, [currentUserProfileId]);
 
+  // Auto scroll to bottom when new messages arrive
+  useEffect(() => {
+    if (!messages || messages.length === 0) return;
+    // Defer to next frame to ensure list has rendered
+    requestAnimationFrame(() => {
+      try { listRef.current?.scrollToEnd({ animated: true }); } catch {}
+    });
+  }, [messages?.length]);
+
   const getItemLayout = useCallback((_: any, index: number) => ({ length: 56, offset: 56 * index, index }), []);
 
   const isColdEmpty = !otherSummary && (!messages || messages.length === 0);
+
+  const buildDatedItems = useCallback(() => {
+    if (!Array.isArray(messages)) return [] as any[];
+    const items: any[] = [];
+    let lastDateKey = '';
+    const now = new Date();
+    const yesterday = new Date();
+    yesterday.setDate(now.getDate() - 1);
+    const dateKeyOf = (iso: string) => new Date(iso).toDateString();
+    const labelOf = (iso: string) => {
+      const d = new Date(iso);
+      if (d.toDateString() === now.toDateString()) return 'Today';
+      if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
+      return d.toLocaleDateString();
+    };
+    const sorted = [...messages].sort((a: any, b: any) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    for (const m of sorted) {
+      const k = dateKeyOf(m.timestamp);
+      if (k !== lastDateKey) {
+        items.push({ __type: 'header', id: `hdr-${k}-${items.length}`, label: labelOf(m.timestamp) });
+        lastDateKey = k;
+      }
+      items.push(m);
+    }
+    return items;
+  }, [messages]);
+
+  const datedItems = buildDatedItems();
 
   const renderTypingIndicator = () => {
     if (typingUsers.length === 0) return null;
@@ -368,10 +434,11 @@ export default function ChatScreen() {
   };
 
   return (
-    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <View style={styles.header}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: "#3A805B" }}>
+    <KeyboardAvoidingView style={[styles.container, { backgroundColor: theme.colors.background }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <View style={[styles.header, { backgroundColor: theme.colors.primary }]}>
         <TouchableOpacity onPress={() => router.back()}>
-          <Feather name='chevron-left' size={24} color="#fff" />
+          <Feather name='chevron-left' size={24} color={theme.colors.primaryText} />
         </TouchableOpacity>
         <TouchableOpacity style={styles.headerCenter} onPress={() => {
           if (otherParticipantId) {
@@ -391,12 +458,12 @@ export default function ChatScreen() {
             <Image source={{ uri: otherSummary.profile_picture_url }} style={styles.headerAvatar} />
           ) : (
             <View style={styles.headerAvatarPlaceholder}>
-              <Feather name="user" size={20} color="#fff" />
+              <Feather name="user" size={20} color={theme.colors.primaryText} />
             </View>
           )}
           <View style={styles.headerInfo}>
-            <Text style={styles.headerTitle}>{savedContactName || (!savedContactId ? (otherSummary?.phone || otherSummary?.username) : (otherSummary?.username || otherSummary?.phone)) || 'QuickTalk user'}</Text>
-            <Text style={styles.headerSubtitle}>
+            <Text style={[styles.headerTitle, { color: theme.colors.primaryText }]}>{savedContactName || (!savedContactId ? (otherSummary?.phone || otherSummary?.username) : (otherSummary?.username || otherSummary?.phone)) || 'QuickTalk user'}</Text>
+            <Text style={[styles.headerSubtitle, { color: theme.colors.primaryText }]}>
               {otherUserPresence?.isOnline
                 ? 'online'
                 : (otherUserPresence?.lastSeen ? `last seen ${formatLastSeen(otherUserPresence.lastSeen)}` : '')}
@@ -404,14 +471,14 @@ export default function ChatScreen() {
           </View>
         </TouchableOpacity>
         <View style={styles.headerRight}>
-          <TouchableOpacity style={styles.headerButton}>
-            <Feather name="video" size={20} color="#fff" />
+          <TouchableOpacity style={styles.headerButton} accessibilityRole="button" accessibilityLabel="Video call">
+            <Feather name="video" size={20} color={theme.colors.primaryText} />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.headerButton}>
-            <Feather name="phone" size={20} color="#fff" />
+          <TouchableOpacity style={styles.headerButton} accessibilityRole="button" accessibilityLabel="Voice call">
+            <Feather name="phone" size={20} color={theme.colors.primaryText} />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.headerButton}>
-            <Feather name="more-vertical" size={20} color="#fff" />
+          <TouchableOpacity style={styles.headerButton} accessibilityRole="button" accessibilityLabel="More options">
+            <Feather name="more-vertical" size={20} color={theme.colors.primaryText} />
           </TouchableOpacity>
         </View>
       </View>
@@ -430,15 +497,16 @@ export default function ChatScreen() {
         </View>
       ) : (
       <FlatList
-        data={[...messages].sort((a: any, b: any) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())}
-        keyExtractor={(m: any) => m.id}
+        data={datedItems}
+        keyExtractor={(m: any, idx: number) => m.__type === 'header' ? m.id : m.id}
         contentContainerStyle={styles.list}
+        ref={listRef}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
             onRefresh={onRefresh}
-            colors={['#3A805B']}
-            tintColor="#3A805B"
+            colors={[theme.colors.primary]}
+            tintColor={theme.colors.primary}
           />
         }
         renderItem={renderMessageItem}
@@ -452,12 +520,12 @@ export default function ChatScreen() {
 
       {renderTypingIndicator()}
 
-      <View style={styles.composer}>
-        <TouchableOpacity style={styles.composerButton}>
-          <Feather name="smile" size={24} color="#666" />
+      <View style={[styles.composer, { backgroundColor: theme.colors.surface, borderTopColor: theme.colors.border }]}>
+        <TouchableOpacity style={styles.composerButton} accessibilityRole="button" accessibilityLabel="Emoji">
+          <Feather name="smile" size={24} color={theme.colors.mutedText} />
         </TouchableOpacity>
         <TextInput
-          style={styles.input}
+          style={[styles.input, { backgroundColor: theme.colors.inputBg, color: theme.colors.text }]}
           value={input}
           onChangeText={(t) => { 
             setInput(t); 
@@ -469,28 +537,29 @@ export default function ChatScreen() {
           }}
           onBlur={() => sendTypingIndicator(false).catch(() => {})}
           placeholder="Message"
-          placeholderTextColor="#999"
+          placeholderTextColor={theme.colors.mutedText}
           multiline
         />
-        <TouchableOpacity style={styles.composerButton}>
-          <Feather name="paperclip" size={24} color="#666" />
+        <TouchableOpacity style={styles.composerButton} accessibilityRole="button" accessibilityLabel="Attach">
+          <Feather name="paperclip" size={24} color={theme.colors.mutedText} />
         </TouchableOpacity>
-        <TouchableOpacity style={styles.composerButton}>
-          <Feather name="camera" size={24} color="#666" />
+        <TouchableOpacity style={styles.composerButton} accessibilityRole="button" accessibilityLabel="Camera">
+          <Feather name="camera" size={24} color={theme.colors.mutedText} />
         </TouchableOpacity>
         <TouchableOpacity 
-          style={[styles.sendButton, !input.trim() && { opacity: 0.5 }]} 
+          style={[styles.sendButton, { backgroundColor: theme.colors.primary }, !input.trim() && { opacity: 0.5 }]} 
           onPress={onSend} 
           disabled={!input.trim()}
         >
           {input.trim() ? (
-            <Feather name='send' size={20} color="#fff" />
+            <Feather name='send' size={20} color={theme.colors.primaryText} />
           ) : (
-            <Feather name='mic' size={20} color="#fff" />
+            <Feather name='mic' size={20} color={theme.colors.primaryText} />
           )}
         </TouchableOpacity>
       </View>
     </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
@@ -570,4 +639,6 @@ const styles = StyleSheet.create({
   doubleCheckContainer: { flexDirection: 'row', alignItems: 'center' },
   firstCheck: { position: 'absolute' },
   secondCheck: { position: 'absolute' },
+  dayHeaderContainer: { alignItems: 'center', marginVertical: 8, paddingVertical: 4, borderRadius: 8, borderWidth: 1 },
+  dayHeaderText: { fontSize: 12 },
 });
