@@ -18,6 +18,7 @@ import Toast from "react-native-toast-message";
 import NetInfo from "@react-native-community/netinfo";
 import { doc, onSnapshot, updateDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import FirebaseService from "@/lib/firebase";
 import { useTheme } from "@/lib/theme";
 
 export default function UserProfileScreen() {
@@ -42,6 +43,8 @@ export default function UserProfileScreen() {
   const [editLastName, setEditLastName] = useState("");
   const [savedFirstName, setSavedFirstName] = useState<string | null>(null);
   const [savedLastName, setSavedLastName] = useState<string | null>(null);
+  const [isBlockedByMe, setIsBlockedByMe] = useState<boolean>(false);
+  const [isBlockedByOther, setIsBlockedByOther] = useState<boolean>(false);
 
   const normalizeProfile = (raw: any, idFromSource?: string) => {
     if (!raw) return null;
@@ -127,6 +130,30 @@ export default function UserProfileScreen() {
       unsubscribeNetInfo();
     };
   }, [userId]);
+
+  // Watch my block status for this user
+  useEffect(() => {
+    if (!ownerProfileId || !userId) return;
+    const ref = doc(db, "user_profiles", ownerProfileId, "blocked", userId);
+    const unsub = onSnapshot(ref, (snap) => {
+      const d: any = snap.exists() ? snap.data() : null;
+      const active = !!d && d.blocked !== false && !d.unblockedAt;
+      setIsBlockedByMe(active);
+    });
+    return () => unsub();
+  }, [ownerProfileId, userId]);
+
+  // Watch if the other user has blocked me
+  useEffect(() => {
+    if (!ownerProfileId || !userId) return;
+    const ref = doc(db, "user_profiles", userId, "blocked", ownerProfileId);
+    const unsub = onSnapshot(ref, (snap) => {
+      const d: any = snap.exists() ? snap.data() : null;
+      const active = !!d && d.blocked !== false && !d.unblockedAt;
+      setIsBlockedByOther(active);
+    });
+    return () => unsub();
+  }, [ownerProfileId, userId]);
 
   // Live-update saved contact name when this profile is a saved contact
   useEffect(() => {
@@ -215,6 +242,21 @@ export default function UserProfileScreen() {
         fromProfile: "true",
       },
     });
+  };
+
+  const handleToggleBlock = async () => {
+    try {
+      if (!ownerProfileId || !userId) return;
+      if (isBlockedByMe) {
+        await FirebaseService.unblockUser(ownerProfileId, userId);
+        Toast.show({ type: 'success', text1: 'User unblocked' });
+      } else {
+        await FirebaseService.blockUser(ownerProfileId, userId);
+        Toast.show({ type: 'success', text1: 'User blocked' });
+      }
+    } catch (e: any) {
+      Toast.show({ type: 'error', text1: 'Action failed', text2: e?.message || '' });
+    }
   };
 
   const formatLastSeen = (lastSeenTime: any) => {
@@ -403,13 +445,17 @@ export default function UserProfileScreen() {
               <View
                 style={[
                   styles.statusIndicator,
-                  profile.isOnline
+                  isBlockedByMe || isBlockedByOther
+                    ? styles.offlineIndicator
+                    : profile.isOnline
                     ? styles.onlineIndicator
                     : styles.offlineIndicator,
                 ]}
               />
               <Text style={[styles.statusText, { color: theme.colors.text }]}>
-                {profile.isOnline ?? profile.is_online
+                {isBlockedByMe || isBlockedByOther
+                  ? ""
+                  : (profile.isOnline ?? profile.is_online)
                   ? "Online"
                   : `Last seen ${formatLastSeen(
                       profile.lastSeen || profile.last_seen
@@ -499,6 +545,23 @@ export default function UserProfileScreen() {
                   Save Contact
                 </Text>
               </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.secondaryButton,
+                  { borderColor: isBlockedByMe ? '#E53935' : theme.colors.primary },
+                ]}
+                onPress={handleToggleBlock}
+              >
+                <Feather name={isBlockedByMe ? 'unlock' : 'slash'} size={18} color={isBlockedByMe ? '#E53935' : theme.colors.primary} />
+                <Text
+                  style={[
+                    styles.secondaryButtonText,
+                    { color: isBlockedByMe ? '#E53935' : theme.colors.primary },
+                  ]}
+                >
+                  {isBlockedByMe ? 'Unblock user' : 'Block user'}
+                </Text>
+              </TouchableOpacity>
             </View>
           ) : (
             <View
@@ -528,6 +591,23 @@ export default function UserProfileScreen() {
                   ]}
                 >
                   Edit Saved Name
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.secondaryButton,
+                  { borderColor: isBlockedByMe ? '#E53935' : theme.colors.primary },
+                ]}
+                onPress={handleToggleBlock}
+              >
+                <Feather name={isBlockedByMe ? 'unlock' : 'slash'} size={18} color={isBlockedByMe ? '#E53935' : theme.colors.primary} />
+                <Text
+                  style={[
+                    styles.secondaryButtonText,
+                    { color: isBlockedByMe ? '#E53935' : theme.colors.primary },
+                  ]}
+                >
+                  {isBlockedByMe ? 'Unblock user' : 'Block user'}
                 </Text>
               </TouchableOpacity>
               {isEditingSavedName && (
@@ -850,6 +930,7 @@ const styles = StyleSheet.create({
     gap: 8,
     borderWidth: 1,
     borderColor: "#3A805B",
+    marginTop: 14,
   },
   secondaryButtonText: {
     color: "#3A805B",

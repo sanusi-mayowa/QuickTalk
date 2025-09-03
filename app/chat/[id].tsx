@@ -29,6 +29,7 @@ import {
   getDocs,
   query,
   where,
+  onSnapshot,
 } from "firebase/firestore";
 import Toast from "react-native-toast-message";
 import { useSocketChat } from "@/hooks/useSocketChat";
@@ -74,6 +75,9 @@ export default function ChatScreen() {
   // Optimistic UI overlays
   const [messageOverrides, setMessageOverrides] = useState<Record<string, Partial<any>>>({});
   const [hiddenMessageIds, setHiddenMessageIds] = useState<Set<string>>(new Set());
+  // Blocking state
+  const [isBlockedByMe, setIsBlockedByMe] = useState<boolean>(false);
+  const [isBlockedByOther, setIsBlockedByOther] = useState<boolean>(false);
 
   const getChatCacheKey = useCallback(() => `chat:${chatId}:data`, [chatId]);
   const getMessagesCacheKey = useCallback(
@@ -302,6 +306,59 @@ export default function ChatScreen() {
     resolveParticipants();
   }, [chatId, cacheData, currentUser, authIsOnline, loadCachedUserProfile]);
 
+  // Subscribe to other participant profile for live avatar/username updates
+  useEffect(() => {
+    if (!otherParticipantId) return;
+    const ref = doc(db, "user_profiles", otherParticipantId);
+    const unsubscribe = onSnapshot(ref, (snap) => {
+      if (!snap.exists()) return;
+      const d: any = snap.data();
+      setOtherSummary((prev) => ({
+        ...(prev || {}),
+        username: d.username || (prev || {}).username,
+        phone: d.phone || (prev || {}).phone,
+        profile_picture_url: d.profile_picture_url || d.profile_picture_data || (prev || {}).profile_picture_url || null,
+        is_online: typeof d.is_online === 'boolean' ? d.is_online : (prev || {}).is_online,
+        last_seen: d.last_seen || (prev || {}).last_seen,
+      }));
+    });
+    return () => unsubscribe();
+  }, [otherParticipantId]);
+
+  // Watch block status (both directions)
+  useEffect(() => {
+    if (!currentUserProfileId || !otherParticipantId) return;
+    const myBlockRef = doc(
+      db,
+      "user_profiles",
+      currentUserProfileId,
+      "blocked",
+      otherParticipantId
+    );
+    const theirBlockRef = doc(
+      db,
+      "user_profiles",
+      otherParticipantId,
+      "blocked",
+      currentUserProfileId
+    );
+    const unsubMine = onSnapshot(myBlockRef, (snap) => {
+      const d: any = snap.exists() ? snap.data() : null;
+      // Active when doc exists and not explicitly unblocked
+      const active = !!d && d.blocked !== false && !d.unblockedAt;
+      setIsBlockedByMe(active);
+    });
+    const unsubTheirs = onSnapshot(theirBlockRef, (snap) => {
+      const d: any = snap.exists() ? snap.data() : null;
+      const active = !!d && d.blocked !== false && !d.unblockedAt;
+      setIsBlockedByOther(active);
+    });
+    return () => {
+      try { unsubMine(); } catch {}
+      try { unsubTheirs(); } catch {}
+    };
+  }, [currentUserProfileId, otherParticipantId]);
+
   // Load saved contact name/id for the other participant from current user's contacts
   useEffect(() => {
     const loadSavedContact = async () => {
@@ -425,6 +482,15 @@ export default function ChatScreen() {
     const text = input.trim();
     if (!text) return;
 
+    if (isBlockedByMe) {
+      Toast.show({ type: "info", text1: "You blocked this user" });
+      return;
+    }
+    if (isBlockedByOther) {
+      Toast.show({ type: "error", text1: "Can't message this user" });
+      return;
+    }
+
     try {
       if (editingMessageId) {
         // Edit existing message
@@ -477,6 +543,14 @@ export default function ChatScreen() {
 
   const pickAndSendMedia = async () => {
     try {
+      if (isBlockedByMe) {
+        Toast.show({ type: 'info', text1: 'You blocked this user' });
+        return;
+      }
+      if (isBlockedByOther) {
+        Toast.show({ type: 'error', text1: "Can't message this user" });
+        return;
+      }
       // Request permissions
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!perm.granted) {
@@ -773,7 +847,7 @@ export default function ChatScreen() {
             {repliedTo && (
               <View style={styles.replyPreview}>
                 <Text style={styles.replyAuthor}>
-                  {repliedTo.senderId === currentUserProfileId ? "You" : otherSummary?.username || otherSummary?.phone || "User"}
+                  {repliedTo.senderId === currentUserProfileId ? "You" : savedContactName || otherSummary?.phone || otherSummary?.username || "User"}
                 </Text>
                 <Text style={styles.replyText} numberOfLines={2}>
                   {repliedTo.content}
@@ -932,6 +1006,24 @@ export default function ChatScreen() {
     );
   };
 
+  const renderBlockBanner = () => {
+    if (!isBlockedByMe && !isBlockedByOther) return null;
+    const label = isBlockedByMe
+      ? "You blocked this user"
+      : "You can't message this user";
+    return (
+      <View
+        style={[
+          styles.connectionBanner,
+          { backgroundColor: '#9E9E9E', top: 112 },
+        ]}
+      >
+        <Feather name="slash" size={16} color="#fff" />
+        <Text style={styles.connectionText}>{label}</Text>
+      </View>
+    );
+  };
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: "#3A805B" }}>
       <KeyboardAvoidingView
@@ -1002,7 +1094,9 @@ export default function ChatScreen() {
                   { color: theme.colors.primaryText },
                 ]}
               >
-                {otherUserPresence?.isOnline
+                {isBlockedByMe || isBlockedByOther
+                  ? ""
+                  : otherUserPresence?.isOnline
                   ? "online"
                   : otherUserPresence?.lastSeen
                   ? `last seen ${formatLastSeen(otherUserPresence.lastSeen)}`
@@ -1026,6 +1120,7 @@ export default function ChatScreen() {
         </View>
 
         {renderConnectionStatus()}
+        {renderBlockBanner()}
 
         {isColdEmpty && (
           <View style={styles.center}>
@@ -1039,7 +1134,7 @@ export default function ChatScreen() {
           </View>
         ) : (
           <FlatList
-            data={datedItems}
+            data={isBlockedByMe || isBlockedByOther ? [] : datedItems}
             keyExtractor={(m: any, idx: number) =>
               m.__type === "header" ? m.id : m.id
             }
@@ -1109,13 +1204,14 @@ export default function ChatScreen() {
             placeholder="Message"
             placeholderTextColor={theme.colors.mutedText}
             multiline
+            editable={!isBlockedByMe && !isBlockedByOther}
           />
           <TouchableOpacity
             style={styles.composerButton}
             accessibilityRole="button"
             accessibilityLabel="Attach"
             onPress={pickAndSendMedia}
-            disabled={sendingMedia}
+            disabled={sendingMedia || isBlockedByMe || isBlockedByOther}
           >
             <Feather
               name="paperclip"
@@ -1131,7 +1227,7 @@ export default function ChatScreen() {
               !input.trim() && { opacity: 0.5 },
             ]}
             onPress={onSend}
-            disabled={!input.trim()}
+            disabled={!input.trim() || isBlockedByMe || isBlockedByOther}
           >
             {input.trim() ? (
               <Feather name="send" size={20} color={theme.colors.primaryText} />

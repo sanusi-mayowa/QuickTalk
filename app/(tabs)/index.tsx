@@ -484,43 +484,42 @@ export default function HomeScreen() {
         const otherParticipantId = (chat.participants as string[]).find((pid: string) => pid !== currentUserProfileWithId.id);
         if (!otherParticipantId) continue;
 
-        // Prefer denormalized participant summaries if present
+        // Prefer denormalized participant summaries if present, but always merge fresh profile fields (e.g., avatar updates)
         let participantData: any = null;
-        if (chat.participant_summaries && chat.participant_summaries[otherParticipantId]) {
-          participantData = {
-            id: otherParticipantId,
-            ...chat.participant_summaries[otherParticipantId],
-          } as any;
-        } else {
-          // Fallback to fetching profile; guard with try/catch to avoid breaking on permission errors
-          try {
-            const otherProfileDoc = await getDoc(doc(db, 'user_profiles', otherParticipantId));
-            if (otherProfileDoc.exists()) {
-              participantData = {
-                id: otherProfileDoc.id,
-                ...otherProfileDoc.data(),
-              } as any;
-            }
-          } catch (e) {
-            // Permission error: use minimal placeholder
-            participantData = {
-              id: otherParticipantId,
-              username: 'QuickTalk user',
-              about: '',
-              profile_picture_url: null,
-              phone: '',
-            } as any;
+        const summary = chat.participant_summaries && chat.participant_summaries[otherParticipantId]
+          ? { id: otherParticipantId, ...chat.participant_summaries[otherParticipantId] }
+          : null;
+        let profileDocData: any = null;
+        try {
+          const otherProfileDoc = await getDoc(doc(db, 'user_profiles', otherParticipantId));
+          if (otherProfileDoc.exists()) {
+            profileDocData = { id: otherProfileDoc.id, ...otherProfileDoc.data() } as any;
           }
-          if (!participantData) {
-            // If still nothing, skip this chat entry
-            continue;
-          }
+        } catch (e) {
+          // ignore fetch error; we'll fallback to summary or placeholder
         }
 
-        // Normalize profile picture so avatars render for newly saved contacts
-        if (participantData) {
-          participantData.profile_picture_url = participantData.profile_picture_url || participantData.profile_picture_data || null;
+        if (summary || profileDocData) {
+          // Merge: profile doc wins for avatar, username, phone
+          participantData = {
+            id: otherParticipantId,
+            ...(summary || {}),
+            ...(profileDocData || {}),
+          } as any;
+        } else {
+          // Minimal placeholder
+          participantData = {
+            id: otherParticipantId,
+            username: 'QuickTalk user',
+            about: '',
+            profile_picture_url: null,
+            phone: '',
+          } as any;
         }
+        if (!participantData) continue;
+
+        // Normalize profile picture so avatars render for newly saved contacts
+        participantData.profile_picture_url = participantData.profile_picture_url || participantData.profile_picture_data || null;
 
         // Try to find a saved contact for this participant. Prefer explicit linkage, then fallback to phone match.
         let contactData: any | undefined;

@@ -269,15 +269,16 @@ export default function SettingsScreen() {
                 styles.settingItem,
                 { borderBottomColor: theme.colors.border },
               ]}
+              onPress={() => router.push('/blocked-contacts')}
             >
               <View style={styles.settingItemLeft}>
                 <View style={styles.settingIcon}>
-                  <Feather name="bell" size={20} color={theme.colors.primary} />
+                  <Feather name="slash" size={20} color={theme.colors.primary} />
                 </View>
                 <Text
                   style={[styles.settingText, { color: theme.colors.text }]}
                 >
-                  Notifications
+                  Blocked contacts
                 </Text>
               </View>
             </TouchableOpacity>

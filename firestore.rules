@@ -7,8 +7,8 @@ service cloud.firestore {
 
     // Super admin UIDs who can grant/revoke admin
     function isSuperAdmin() {
-      // TODO: replace with your Firebase Auth UID
-      return request.auth != null && request.auth.uid in ['REPLACE_WITH_YOUR_UID'];
+      // Super admin(s) who can grant/revoke admin
+      return request.auth != null && request.auth.uid in ['8ChoGizmrfgGljFwYkRG0gK7ixj2'];
     }
 
     // Safe get profile and return its auth uid (or null)
@@ -21,15 +21,15 @@ service cloud.firestore {
       // Any signed-in user can read profiles
       allow read: if isSignedIn();
 
-      // Create only own profile (client must write auth_user_id)
+      // Create profile (owner can create own; super admin can create for anyone)
       allow create: if isSignedIn()
-        && request.auth.uid == request.resource.data.auth_user_id
+        && (request.auth.uid == request.resource.data.auth_user_id || isSuperAdmin())
         && request.resource.data.auth_user_id is string
-        // Only super admin can create a profile as admin
+        // Only super admin can set is_admin=true on create
         && (!('is_admin' in request.resource.data) || request.resource.data.is_admin == false || isSuperAdmin());
 
-      // Update/Delete only by owner
-      allow update, delete: if isSignedIn() && request.auth.uid == resource.data.auth_user_id
+      // Update/Delete by owner or super admin
+      allow update, delete: if isSignedIn() && (request.auth.uid == resource.data.auth_user_id || isSuperAdmin())
         // Only super admin can change is_admin flag
         && (!(('is_admin' in request.resource.data) && request.resource.data.is_admin != resource.data.is_admin) || isSuperAdmin());
 
