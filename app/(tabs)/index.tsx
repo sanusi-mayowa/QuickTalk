@@ -22,6 +22,7 @@ import { Feather } from '@expo/vector-icons';
 import { TypingUser } from '@/hooks/useRealtimeChat';
 import { useTheme } from '@/lib/theme';
 import { useOffline } from '@/hooks/useOffline';
+import { useOfflineAuth } from '@/hooks/useOfflineAuth';
 import OfflineIndicator from '@/components/OfflineIndicator';
 
 // Prefetch helper for expo-router
@@ -79,6 +80,7 @@ export default function HomeScreen() {
   const { theme } = useTheme();
   const { width, height, fontScale } = useWindowDimensions();
   const { syncStatus } = useOffline();
+  const { currentUser: offlineCurrentUser, isOnline: authIsOnline } = useOfflineAuth();
   const [chats, setChats] = useState<Chat[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearchBar, setShowSearchBar] = useState(false);
@@ -92,6 +94,8 @@ export default function HomeScreen() {
   const [typingUsers, setTypingUsers] = useState<Record<string, TypingUser[]>>({});
   // ADDED: State for tracking message subscriptions per chat
   const [messageChannels, setMessageChannels] = useState<Record<string, any>>({});
+  // ADDED: State for tracking typing subscriptions per chat
+  const [typingChannels, setTypingChannels] = useState<Record<string, any>>({});
   // ADDED: Offline flag for UI presence indicators
   const [isOffline, setIsOffline] = useState(false);
   const appStateRef = useRef<string>(AppState.currentState);
@@ -127,22 +131,30 @@ export default function HomeScreen() {
           realtimeChannel();
           setRealtimeChannel(null);
         }
-        Object.values(messageChannels).forEach(unsub => {
-          if (typeof unsub === 'function') unsub();
-        });
-        setMessageChannels({});
-      };
-    }, [])
+              Object.values(messageChannels).forEach(unsub => {
+        if (typeof unsub === 'function') unsub();
+      });
+      setMessageChannels({});
+    };
+  }, [offlineCurrentUser, authIsOnline])
   );
 
   const loadCurrentUser = async () => {
     try {
-      const user = auth.currentUser;
-      if (!user) return;
-      const q = query(collection(db, 'user_profiles'), where('auth_user_id', '==', user.uid));
-      const snap = await getDocs(q);
-      const profile = snap.docs[0]?.data() as any | undefined;
-      if (profile) setCurrentUser(profile as any);
+      // Use offline auth hook if available, fallback to Firestore only if online
+      if (offlineCurrentUser) {
+        setCurrentUser(offlineCurrentUser as any);
+        return;
+      }
+      
+      if (authIsOnline) {
+        const user = auth.currentUser;
+        if (!user) return;
+        const q = query(collection(db, 'user_profiles'), where('auth_user_id', '==', user.uid));
+        const snap = await getDocs(q);
+        const profile = snap.docs[0]?.data() as any | undefined;
+        if (profile) setCurrentUser(profile as any);
+      }
     } catch (error) {
       console.error('Error loading current user:', error);
     }
@@ -178,45 +190,55 @@ export default function HomeScreen() {
           docs.forEach((change: any) => {
             const newMessage: any = change.doc.data();
             if (change.type === 'added') {
-              setChats(prevChats => prevChats.map(prevChat => {
-                if (prevChat.id !== chat.id) return prevChat;
-                const isMyMessage = userProfile && newMessage.sender_id === (userProfile as any).id;
-                const messageStatus = isMyMessage ? { isRead: false, isDelivered: false, isSent: true } : undefined;
-                return {
-                  ...prevChat,
-                  lastMessage: newMessage.content,
-                  lastMessageTime: formatMessageTime(newMessage.created_at),
-                  lastMessageId: newMessage.id,
-                  lastMessageSenderId: newMessage.sender_id,
-                  lastMessageStatus: messageStatus,
-                  unreadCount: userProfile && newMessage.sender_id !== (userProfile as any).id ? prevChat.unreadCount + 1 : prevChat.unreadCount,
-                  hasUnreadMessages: userProfile && newMessage.sender_id !== (userProfile as any).id ? true : prevChat.hasUnreadMessages,
-                } as any;
-              }));
+              setChats(prevChats => {
+                const updatedChats = prevChats.map(prevChat => {
+                  if (prevChat.id !== chat.id) return prevChat;
+                  const isMyMessage = userProfile && newMessage.sender_id === (userProfile as any).id;
+                  const messageStatus = isMyMessage ? { isRead: false, isDelivered: false, isSent: true } : undefined;
+                  return {
+                    ...prevChat,
+                    lastMessage: newMessage.content,
+                    lastMessageTime: formatMessageTime(newMessage.created_at),
+                    lastMessageId: newMessage.id,
+                    lastMessageSenderId: newMessage.sender_id,
+                    lastMessageStatus: messageStatus,
+                    unreadCount: userProfile && newMessage.sender_id !== (userProfile as any).id ? prevChat.unreadCount + 1 : prevChat.unreadCount,
+                    hasUnreadMessages: userProfile && newMessage.sender_id !== (userProfile as any).id ? true : prevChat.hasUnreadMessages,
+                  } as any;
+                });
+                
+                // Re-sort chats by most recent message time
+                return sortChatsByRecentMessage(updatedChats);
+              });
             } else if (change.type === 'modified') {
               const updatedMessage: any = change.doc.data();
-              setChats(prevChats => prevChats.map(prevChat => {
-                if (prevChat.id !== chat.id) return prevChat;
-                if (prevChat.lastMessageId === updatedMessage.id && userProfile) {
-                  const isMyMessage = updatedMessage.sender_id === (userProfile as any).id;
-                  let newStatus = prevChat.lastMessageStatus;
-                  if (isMyMessage) {
-                    const isRead = Array.isArray(updatedMessage.read_by) && updatedMessage.read_by.includes(prevChat.participant.id);
-                    const isDelivered = Array.isArray(updatedMessage.delivered_to) && updatedMessage.delivered_to.includes(prevChat.participant.id);
-                    newStatus = { isRead, isDelivered, isSent: true };
+              setChats(prevChats => {
+                const updatedChats = prevChats.map(prevChat => {
+                  if (prevChat.id !== chat.id) return prevChat;
+                  if (prevChat.lastMessageId === updatedMessage.id && userProfile) {
+                    const isMyMessage = updatedMessage.sender_id === (userProfile as any).id;
+                    let newStatus = prevChat.lastMessageStatus;
+                    if (isMyMessage) {
+                      const isRead = Array.isArray(updatedMessage.read_by) && updatedMessage.read_by.includes(prevChat.participant.id);
+                      const isDelivered = Array.isArray(updatedMessage.delivered_to) && updatedMessage.delivered_to.includes(prevChat.participant.id);
+                      newStatus = { isRead, isDelivered, isSent: true };
+                    }
+                    return { ...prevChat, lastMessageStatus: newStatus, lastMessageReactions: updatedMessage.reactions || prevChat.lastMessageReactions } as any;
                   }
-                  return { ...prevChat, lastMessageStatus: newStatus, lastMessageReactions: updatedMessage.reactions || prevChat.lastMessageReactions } as any;
-                }
-                // Decrement unread count when other user's message becomes read by me
-                if (userProfile && updatedMessage.sender_id !== (userProfile as any).id) {
-                  const readByMe = Array.isArray(updatedMessage.read_by) && updatedMessage.read_by.includes((userProfile as any).id);
-                  if (readByMe && prevChat.unreadCount > 0) {
-                    const nextUnread = Math.max(0, (prevChat.unreadCount || 0) - 1);
-                    return { ...prevChat, unreadCount: nextUnread, hasUnreadMessages: nextUnread > 0 } as any;
+                  // Decrement unread count when other user's message becomes read by me
+                  if (userProfile && updatedMessage.sender_id !== (userProfile as any).id) {
+                    const readByMe = Array.isArray(updatedMessage.read_by) && updatedMessage.read_by.includes((userProfile as any).id);
+                    if (readByMe && prevChat.unreadCount > 0) {
+                      const nextUnread = Math.max(0, (prevChat.unreadCount || 0) - 1);
+                      return { ...prevChat, unreadCount: nextUnread, hasUnreadMessages: nextUnread > 0 } as any;
                   }
-                }
-                return prevChat;
-              }));
+                  }
+                  return prevChat;
+                });
+                
+                // Re-sort chats by most recent message time
+                return sortChatsByRecentMessage(updatedChats);
+              });
             }
           });
         });
@@ -228,6 +250,70 @@ export default function HomeScreen() {
       console.error('Error setting up message subscriptions:', error);
     }
   }, [currentUser, messageChannels]);
+
+  // ADDED: Setup typing subscriptions per chat using Firestore typing_indicators
+  const setupTypingSubscriptions = useCallback(async (chatList: Chat[]) => {
+    try {
+      const user = auth.currentUser;
+      if (!user) return;
+
+      let userProfile = currentUser as any;
+      if (!userProfile) {
+        const qUser = query(collection(db, 'user_profiles'), where('auth_user_id', '==', user.uid));
+        const snapUser = await getDocs(qUser);
+        userProfile = snapUser.docs[0]?.data() as any;
+        if (!userProfile) return;
+        userProfile.id = snapUser.docs[0]?.id;
+      }
+
+      // Cleanup previous typing subscriptions
+      Object.values(typingChannels).forEach((unsub) => { if (typeof unsub === 'function') unsub(); });
+
+      const newTypingChannels: Record<string, any> = {};
+
+      chatList.forEach((chat) => {
+        const qTyping = query(
+          collection(db, 'typing_indicators'),
+          where('chat_id', '==', chat.id)
+        );
+        const unsub = onSnapshot(qTyping, async (snapshot) => {
+          snapshot.docChanges().forEach((change) => {
+            const t: any = change.doc.data();
+            const typingUserId = t.user_id;
+            if (!typingUserId || typingUserId === userProfile.id) return;
+            const isTyping = !!t.is_typing;
+            const updatedAt = t.updated_at?.toDate ? t.updated_at.toDate().toISOString() : (t.updated_at || new Date().toISOString());
+
+            setTypingUsers((prev) => {
+              const current = prev[chat.id] || [];
+              const filtered = current.filter((u) => u.user_id !== typingUserId);
+              if (isTyping) {
+                const username = chat.participant?.username || chat.participant?.phone || 'User';
+                return {
+                  ...prev,
+                  [chat.id]: [
+                    ...filtered,
+                    {
+                      user_id: typingUserId,
+                      username,
+                      is_typing: true,
+                      updated_at: updatedAt,
+                    },
+                  ],
+                } as any;
+              }
+              return { ...prev, [chat.id]: filtered } as any;
+            });
+          });
+        });
+        newTypingChannels[chat.id] = unsub;
+      });
+
+      setTypingChannels(newTypingChannels);
+    } catch (error) {
+      console.error('Error setting up typing subscriptions:', error);
+    }
+  }, [currentUser, typingChannels]);
 
   // ADDED: Function to load unread count for a specific chat
   const loadUnreadCountForChat = async (chatId: string, userId: string): Promise<number> => {
@@ -338,7 +424,7 @@ export default function HomeScreen() {
         Object.keys(updated).forEach(chatId => {
           const typingList = updated[chatId];
           const filtered = typingList.filter(user => {
-            const userTime = new Date(user.updated_at).getTime();
+            const userTime = new Date((user as any).updated_at || (user as any).updatedAt || new Date().toISOString()).getTime();
             return now - userTime < 5000; // Remove if older than 5 seconds
           });
 
@@ -511,14 +597,18 @@ export default function HomeScreen() {
         } as any);
       }
 
-      setChats(transformedChats);
+      // Sort chats by most recent message time (newest first)
+      const sortedChats = sortChatsByRecentMessage(transformedChats);
+
+      setChats(sortedChats);
       setIsOffline(false);
       // Cache chats for offline usage
       try {
         await AsyncStorage.setItem(`cache:chats:${currentUserProfileWithId.id}`, JSON.stringify(transformedChats));
       } catch {}
-      // ADDED: Setup message subscriptions for all chats
+      // ADDED: Setup message and typing subscriptions for all chats
       setupMessageSubscriptions(transformedChats);
+      setupTypingSubscriptions(transformedChats);
     } catch (error: any) {
       console.error('Error loading chats:', error);
       // Fallback: try load cached chats
@@ -533,7 +623,11 @@ export default function HomeScreen() {
         const cached = await AsyncStorage.getItem(`cache:chats:${ownerId}`);
         if (cached) {
           const parsed = JSON.parse(cached);
-          if (Array.isArray(parsed)) setChats(parsed);
+          if (Array.isArray(parsed)) {
+            // Sort cached chats by most recent message time
+            const sortedCachedChats = sortChatsByRecentMessage(parsed);
+            setChats(sortedCachedChats);
+          }
         }
       } catch {}
       setIsOffline(true);
@@ -541,6 +635,15 @@ export default function HomeScreen() {
       setLoading(false);
       setRefreshing(false);
     }
+  };
+
+  // Helper function to sort chats by most recent message time
+  const sortChatsByRecentMessage = (chatList: Chat[]) => {
+    return chatList.sort((a, b) => {
+      const timeA = new Date(a.lastMessageTime).getTime();
+      const timeB = new Date(b.lastMessageTime).getTime();
+      return timeB - timeA; // Descending order (newest first)
+    });
   };
 
   const formatMessageTime = (timestamp: string) => {

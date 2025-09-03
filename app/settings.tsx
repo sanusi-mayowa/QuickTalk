@@ -16,6 +16,7 @@ import { Feather } from "@expo/vector-icons";
 import { auth, db } from "@/lib/firebase";
 import { useTheme, ThemeMode } from "@/lib/theme";
 import { useOffline } from "@/hooks/useOffline";
+import { useOfflineAuth } from "@/hooks/useOfflineAuth";
 import { signOut } from "firebase/auth";
 import { collection, getDocs, query, where } from "firebase/firestore";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -33,6 +34,7 @@ export default function SettingsScreen() {
   const router = useRouter();
   const { theme, mode, setMode } = useTheme();
   const { syncStatus, syncOfflineData, clearFailedItems } = useOffline();
+  const { clearCachedProfile } = useOfflineAuth();
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -70,6 +72,9 @@ export default function SettingsScreen() {
 
   const handleLogout = async () => {
     try {
+      // Clear cached profile before signing out
+      await clearCachedProfile();
+      
       await signOut(auth);
       await AsyncStorage.multiRemove(["userID", "isAuthenticated"]);
       console.log("signout sucessfull");

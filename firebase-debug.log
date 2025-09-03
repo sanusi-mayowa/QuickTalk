@@ -1,0 +1,67 @@
+[debug] [2025-09-02T14:59:38.144Z] ----------------------------------------------------------------------
+[debug] [2025-09-02T14:59:38.534Z] Command:       C:\Program Files\nodejs\node.exe C:\Users\GEO\AppData\Roaming\npm\node_modules\firebase-tools\lib\bin\firebase.js deploy --only firestore:indexes
+[debug] [2025-09-02T14:59:38.539Z] CLI Version:   14.14.0
+[debug] [2025-09-02T14:59:38.539Z] Platform:      win32
+[debug] [2025-09-02T14:59:38.539Z] Node Version:  v24.3.0
+[debug] [2025-09-02T14:59:38.540Z] Time:          Tue Sep 02 2025 15:59:38 GMT+0100 (West Africa Standard Time)
+[debug] [2025-09-02T14:59:38.540Z] ----------------------------------------------------------------------
+[debug] 
+[debug] [2025-09-02T14:59:41.448Z] > command requires scopes: ["email","openid","https://www.googleapis.com/auth/cloudplatformprojects.readonly","https://www.googleapis.com/auth/firebase","https://www.googleapis.com/auth/cloud-platform"]
+[debug] [2025-09-02T14:59:41.449Z] > authorizing via signed-in user (sanusifaruq007@gmail.com)
+[debug] [2025-09-02T14:59:41.449Z] [iam] checking project quicktalk-chat for permissions ["datastore.indexes.create","datastore.indexes.delete","datastore.indexes.list","datastore.indexes.update","firebase.projects.get"]
+[debug] [2025-09-02T14:59:41.453Z] Checked if tokens are valid: true, expires at: 1756828580480
+[debug] [2025-09-02T14:59:41.453Z] Checked if tokens are valid: true, expires at: 1756828580480
+[debug] [2025-09-02T14:59:41.551Z] >>> [apiv2][query] POST https://cloudresourcemanager.googleapis.com/v1/projects/quicktalk-chat:testIamPermissions [none]
+[debug] [2025-09-02T14:59:41.551Z] >>> [apiv2][(partial)header] POST https://cloudresourcemanager.googleapis.com/v1/projects/quicktalk-chat:testIamPermissions x-goog-quota-user=projects/quicktalk-chat
+[debug] [2025-09-02T14:59:41.553Z] >>> [apiv2][body] POST https://cloudresourcemanager.googleapis.com/v1/projects/quicktalk-chat:testIamPermissions {"permissions":["datastore.indexes.create","datastore.indexes.delete","datastore.indexes.list","datastore.indexes.update","firebase.projects.get"]}
+[debug] [2025-09-02T14:59:53.132Z] <<< [apiv2][status] POST https://cloudresourcemanager.googleapis.com/v1/projects/quicktalk-chat:testIamPermissions 200
+[debug] [2025-09-02T14:59:53.132Z] <<< [apiv2][body] POST https://cloudresourcemanager.googleapis.com/v1/projects/quicktalk-chat:testIamPermissions {"permissions":["datastore.indexes.create","datastore.indexes.delete","datastore.indexes.list","datastore.indexes.update","firebase.projects.get"]}
+[info] 
+[info] === Deploying to 'quicktalk-chat'...
+[info] 
+[info] i  deploying firestore 
+[info] i  firestore: reading indexes from firestore.indexes.json... 
+[info] i  cloud.firestore: checking firestore.rules for compilation errors... 
+[debug] [2025-09-02T14:59:53.966Z] Checked if tokens are valid: true, expires at: 1756828580480
+[debug] [2025-09-02T14:59:53.967Z] Checked if tokens are valid: true, expires at: 1756828580480
+[debug] [2025-09-02T14:59:53.967Z] >>> [apiv2][query] POST https://firebaserules.googleapis.com/v1/projects/quicktalk-chat:test [none]
+[debug] [2025-09-02T14:59:53.968Z] >>> [apiv2][body] POST https://firebaserules.googleapis.com/v1/projects/quicktalk-chat:test [omitted]
+[debug] [2025-09-02T15:00:11.462Z] <<< [apiv2][status] POST https://firebaserules.googleapis.com/v1/projects/quicktalk-chat:test 200
+[debug] [2025-09-02T15:00:11.462Z] <<< [apiv2][body] POST https://firebaserules.googleapis.com/v1/projects/quicktalk-chat:test {}
+[info] +  cloud.firestore: rules file firestore.rules compiled successfully 
+[debug] [2025-09-02T15:00:11.517Z] Checked if tokens are valid: true, expires at: 1756828580480
+[debug] [2025-09-02T15:00:11.517Z] Checked if tokens are valid: true, expires at: 1756828580480
+[debug] [2025-09-02T15:00:11.518Z] >>> [apiv2][query] GET https://firestore.googleapis.com/v1/projects/quicktalk-chat/databases/(default) [none]
+[debug] [2025-09-02T15:00:17.355Z] <<< [apiv2][status] GET https://firestore.googleapis.com/v1/projects/quicktalk-chat/databases/(default) 200
+[debug] [2025-09-02T15:00:17.367Z] <<< [apiv2][body] GET https://firestore.googleapis.com/v1/projects/quicktalk-chat/databases/(default) {"name":"projects/quicktalk-chat/databases/(default)","uid":"ccb296b3-fd20-476d-bac2-dc21a1410cb8","createTime":"2025-08-21T15:15:41.882588Z","updateTime":"2025-08-21T15:15:41.882588Z","locationId":"nam5","type":"FIRESTORE_NATIVE","concurrencyMode":"PESSIMISTIC","versionRetentionPeriod":"3600s","earliestVersionTime":"2025-09-02T14:00:15.426762Z","appEngineIntegrationMode":"DISABLED","keyPrefix":"s","pointInTimeRecoveryEnablement":"POINT_IN_TIME_RECOVERY_DISABLED","deleteProtectionState":"DELETE_PROTECTION_DISABLED","databaseEdition":"STANDARD","freeTier":true,"etag":"IIq8l/eruo8DMNfBj4iZnI8D"}
+[info] i  firestore: deploying indexes... 
+[debug] [2025-09-02T15:00:19.266Z] Checked if tokens are valid: true, expires at: 1756828580480
+[debug] [2025-09-02T15:00:19.267Z] Checked if tokens are valid: true, expires at: 1756828580480
+[debug] [2025-09-02T15:00:19.267Z] >>> [apiv2][query] GET https://firestore.googleapis.com/v1/projects/quicktalk-chat/databases/(default)/collectionGroups/-/indexes [none]
+[debug] [2025-09-02T15:00:22.735Z] <<< [apiv2][status] GET https://firestore.googleapis.com/v1/projects/quicktalk-chat/databases/(default)/collectionGroups/-/indexes 200
+[debug] [2025-09-02T15:00:22.735Z] <<< [apiv2][body] GET https://firestore.googleapis.com/v1/projects/quicktalk-chat/databases/(default)/collectionGroups/-/indexes {"indexes":[{"name":"projects/quicktalk-chat/databases/(default)/collectionGroups/messages/indexes/CICAgJim14AK","queryScope":"COLLECTION","fields":[{"fieldPath":"chat_id","order":"ASCENDING"},{"fieldPath":"sender_id","order":"ASCENDING"},{"fieldPath":"__name__","order":"ASCENDING"}],"state":"READY","density":"SPARSE_ALL"},{"name":"projects/quicktalk-chat/databases/(default)/collectionGroups/messages/indexes/CICAgOjXh4EK","queryScope":"COLLECTION","fields":[{"fieldPath":"chat_id","order":"ASCENDING"},{"fieldPath":"created_at","order":"ASCENDING"},{"fieldPath":"__name__","order":"ASCENDING"}],"state":"READY","density":"SPARSE_ALL"},{"name":"projects/quicktalk-chat/databases/(default)/collectionGroups/messages/indexes/CICAgJiUpoMK","queryScope":"COLLECTION","fields":[{"fieldPath":"chat_id","order":"ASCENDING"},{"fieldPath":"created_at","order":"DESCENDING"},{"fieldPath":"__name__","order":"DESCENDING"}],"state":"READY","density":"SPARSE_ALL"},{"name":"projects/quicktalk-chat/databases/(default)/collectionGroups/messages/indexes/CICAgOi39IkK","queryScope":"COLLECTION","fields":[{"fieldPath":"chatId","order":"ASCENDING"},{"fieldPath":"timestamp","order":"ASCENDING"},{"fieldPath":"__name__","order":"ASCENDING"}],"state":"READY","density":"SPARSE_ALL"},{"name":"projects/quicktalk-chat/databases/(default)/collectionGroups/messages/indexes/CICAgOi3kJAK","queryScope":"COLLECTION","fields":[{"fieldPath":"chatId","order":"ASCENDING"},{"fieldPath":"timestamp","order":"DESCENDING"},{"fieldPath":"__name__","order":"DESCENDING"}],"state":"READY","density":"SPARSE_ALL"}]}
+[debug] [2025-09-02T15:00:22.739Z] Checked if tokens are valid: true, expires at: 1756828580480
+[debug] [2025-09-02T15:00:22.741Z] Checked if tokens are valid: true, expires at: 1756828580480
+[debug] [2025-09-02T15:00:22.742Z] >>> [apiv2][query] GET https://firestore.googleapis.com/v1/projects/quicktalk-chat/databases/(default)/collectionGroups/-/fields?filter=indexConfig.usesAncestorConfig=false OR ttlConfig:* [none]
+[debug] [2025-09-02T15:00:24.900Z] <<< [apiv2][status] GET https://firestore.googleapis.com/v1/projects/quicktalk-chat/databases/(default)/collectionGroups/-/fields?filter=indexConfig.usesAncestorConfig=false OR ttlConfig:* 200
+[debug] [2025-09-02T15:00:24.900Z] <<< [apiv2][body] GET https://firestore.googleapis.com/v1/projects/quicktalk-chat/databases/(default)/collectionGroups/-/fields?filter=indexConfig.usesAncestorConfig=false OR ttlConfig:* {"fields":[{"name":"projects/quicktalk-chat/databases/(default)/collectionGroups/__default__/fields/*","indexConfig":{"indexes":[{"queryScope":"COLLECTION","fields":[{"fieldPath":"*","order":"ASCENDING"}],"state":"READY"},{"queryScope":"COLLECTION","fields":[{"fieldPath":"*","order":"DESCENDING"}],"state":"READY"},{"queryScope":"COLLECTION","fields":[{"fieldPath":"*","arrayConfig":"CONTAINS"}],"state":"READY"}]}}]}
+[debug] [2025-09-02T15:00:24.901Z] Checked if tokens are valid: true, expires at: 1756828580480
+[debug] [2025-09-02T15:00:24.901Z] Checked if tokens are valid: true, expires at: 1756828580480
+[debug] [2025-09-02T15:00:24.902Z] >>> [apiv2][query] GET https://firestore.googleapis.com/v1/projects/quicktalk-chat/databases/(default) [none]
+[debug] [2025-09-02T15:00:27.097Z] <<< [apiv2][status] GET https://firestore.googleapis.com/v1/projects/quicktalk-chat/databases/(default) 200
+[debug] [2025-09-02T15:00:27.098Z] <<< [apiv2][body] GET https://firestore.googleapis.com/v1/projects/quicktalk-chat/databases/(default) {"name":"projects/quicktalk-chat/databases/(default)","uid":"ccb296b3-fd20-476d-bac2-dc21a1410cb8","createTime":"2025-08-21T15:15:41.882588Z","updateTime":"2025-08-21T15:15:41.882588Z","locationId":"nam5","type":"FIRESTORE_NATIVE","concurrencyMode":"PESSIMISTIC","versionRetentionPeriod":"3600s","earliestVersionTime":"2025-09-02T14:00:26.081928Z","appEngineIntegrationMode":"DISABLED","keyPrefix":"s","pointInTimeRecoveryEnablement":"POINT_IN_TIME_RECOVERY_DISABLED","deleteProtectionState":"DELETE_PROTECTION_DISABLED","databaseEdition":"STANDARD","freeTier":true,"etag":"II/hofyruo8DMNfBj4iZnI8D"}
+[info] i  firestore: The following indexes are defined in your project but are not present in your firestore indexes file:
+	(messages) -- (chatId,ASCENDING) (timestamp,DESCENDING)  -- Density:SPARSE_ALL  
+[debug] [2025-09-02T15:00:32.302Z] ExitPromptError: User force closed the prompt with SIGINT
+    at Interface.sigint (C:\Users\GEO\AppData\Roaming\npm\node_modules\firebase-tools\node_modules\@inquirer\core\dist\commonjs\lib\create-prompt.js:101:37)
+    at Interface.emit (node:events:507:28)
+    at Interface.emit (node:domain:489:12)
+    at [_ttyWrite] [as _ttyWrite] (node:internal/readline/interface:1315:18)
+    at ReadStream.onkeypress (node:internal/readline/interface:284:20)
+    at ReadStream.emit (node:events:519:35)
+    at ReadStream.emit (node:domain:489:12)
+    at emitKeys (node:internal/readline/utils:371:14)
+    at emitKeys.next (<anonymous>)
+    at ReadStream.onData (node:internal/readline/emitKeypressEvents:64:36)
+[error] 
+[error] Error: An unexpected error has occurred.

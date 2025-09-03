@@ -5,6 +5,12 @@ service cloud.firestore {
     // ---------- Helpers ----------
     function isSignedIn() { return request.auth != null; }
 
+    // Super admin UIDs who can grant/revoke admin
+    function isSuperAdmin() {
+      // TODO: replace with your Firebase Auth UID
+      return request.auth != null && request.auth.uid in ['REPLACE_WITH_YOUR_UID'];
+    }
+
     // Safe get profile and return its auth uid (or null)
     function profileAuthUid(profileId) {
       return get(/databases/$(database)/documents/user_profiles/$(profileId)).data.auth_user_id;
@@ -18,10 +24,14 @@ service cloud.firestore {
       // Create only own profile (client must write auth_user_id)
       allow create: if isSignedIn()
         && request.auth.uid == request.resource.data.auth_user_id
-        && request.resource.data.auth_user_id is string;
+        && request.resource.data.auth_user_id is string
+        // Only super admin can create a profile as admin
+        && (!('is_admin' in request.resource.data) || request.resource.data.is_admin == false || isSuperAdmin());
 
       // Update/Delete only by owner
-      allow update, delete: if isSignedIn() && request.auth.uid == resource.data.auth_user_id;
+      allow update, delete: if isSignedIn() && request.auth.uid == resource.data.auth_user_id
+        // Only super admin can change is_admin flag
+        && (!(('is_admin' in request.resource.data) && request.resource.data.is_admin != resource.data.is_admin) || isSuperAdmin());
 
       // ---------- Contacts subcollection ----------
       match /contacts/{contactProfileId} {
@@ -75,6 +85,20 @@ service cloud.firestore {
         && request.resource.data.chat_id is string
         && request.resource.data.user_id is string
         && request.resource.data.is_typing is bool;
+      allow delete: if false;
+    }
+
+    // ---------- reports (moderation) ----------
+    match /reports/{reportId} {
+      // Allow any signed-in user to create a report
+      allow create: if isSignedIn();
+
+      // Allow signed-in users to read for now; tighten to admins when an admin mapping exists
+      allow read, list: if isSignedIn();
+
+      // Allow status updates; can be restricted to admins later
+      allow update: if isSignedIn();
+
       allow delete: if false;
     }
   }

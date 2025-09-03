@@ -5,6 +5,7 @@ import { StatusBar } from "expo-status-bar";
 import Toast from "react-native-toast-message";
 // import { usePresence } from '@/hooks/usePresence';
 import { ThemeProvider, useTheme } from "@/lib/theme";
+import Notifications from "@/lib/notifications";
 
 function LayoutInner() {
   // usePresence();
@@ -16,6 +17,15 @@ function LayoutInner() {
   if (!loaded) {
     return null;
   }
+
+  useEffect(() => {
+    (async () => {
+      try {
+        await Notifications.requestPermissionsAsync();
+        await Notifications.setAndroidChannel();
+      } catch {}
+    })();
+  }, []);
 
   return (
     <>

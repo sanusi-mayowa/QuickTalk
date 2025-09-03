@@ -14,6 +14,7 @@ import {
   updateDoc,
   arrayUnion,
   where,
+  getDocs,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 
@@ -24,8 +25,14 @@ export interface Message {
   senderId: string;
   receiverId: string;
   timestamp: string;
-  status: "sent" | "delivered" | "seen";
+  status?: "sent" | "delivered" | "seen";
   type: "text" | "image" | "file";
+  // New metadata for actions
+  replyTo?: string;
+  reactions?: Record<string, string>;
+  editedAt?: string;
+  deletedFor?: string[];
+  deletedForEveryone?: boolean;
 }
 
 export interface TypingUser {
@@ -140,6 +147,16 @@ export function useSocketChat({
         if (prev.some((m) => m.id === newMessage.id)) {
           return prev;
         }
+        
+        // If this is a message from the other participant, clear our message statuses
+        if (data.senderId !== currentUserId) {
+          // Clear statuses for messages sent by current user
+          const updatedPrev = prev.map((msg) =>
+            msg.senderId === currentUserId ? { ...msg, status: undefined as any } : msg
+          );
+          return [...updatedPrev, newMessage];
+        }
+        
         return [...prev, newMessage];
       });
 
@@ -151,6 +168,17 @@ export function useSocketChat({
           currentUserId
         );
       }
+
+      // Fire local notification for incoming messages
+      try {
+        if (data.senderId !== currentUserId) {
+          const title = "New message";
+          const body = data.content?.slice(0, 120) || "You received a message";
+          import("@/lib/notifications").then((n) => {
+            n.default.presentLocalNotificationAsync({ title, body, data: { chatId } });
+          }).catch(() => {});
+        }
+      } catch {}
     });
 
     // Listen for typing indicators
@@ -224,6 +252,29 @@ export function useSocketChat({
       }
     });
 
+    // Enhanced message status handling for sender
+    socketService.onMessageDelivered((data) => {
+      // Update status for messages sent by current user
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.senderId === currentUserId && msg.id === data.messageId 
+            ? { ...msg, status: "delivered" } 
+            : msg
+        )
+      );
+    });
+
+    socketService.onMessageSeen((data) => {
+      // Update status for messages sent by current user
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.senderId === currentUserId && msg.id === data.messageId 
+            ? { ...msg, status: "seen" } 
+            : msg
+        )
+      );
+    });
+
     // Listen for connection status
     const checkConnection = () => {
       const connected = socketService.getConnectionStatus();
@@ -282,10 +333,30 @@ export function useSocketChat({
                 : new Date().toISOString()),
             status: data.status || "sent",
             type: data.type || "text",
+            replyTo: data.replyTo || undefined,
+            reactions: data.reactions || {},
+            editedAt: data.editedAt?.toDate?.()?.toISOString?.() || (typeof data.editedAt === 'string' ? data.editedAt : undefined),
+            deletedFor: data.deletedFor || [],
+            deletedForEveryone: !!data.deletedForEveryone,
           } as Message;
         });
 
-        setMessages(firebaseMessages);
+        // Filter out messages deleted for everyone or for current user
+        const visible = firebaseMessages.filter((m) => {
+          if (m.deletedForEveryone) return false;
+          if (Array.isArray(m.deletedFor) && m.deletedFor.includes(currentUserId)) return false;
+          return true;
+        });
+
+        // Debug logging
+        console.log('Message filtering:', {
+          total: firebaseMessages.length,
+          visible: visible.length,
+          currentUserId,
+          deletedForExamples: firebaseMessages.slice(0, 3).map(m => ({ id: m.id, deletedFor: m.deletedFor }))
+        });
+
+        setMessages(visible);
         setLoading(false);
 
         // Auto-mark as delivered for any messages addressed to me that are still 'sent'
@@ -366,6 +437,8 @@ export function useSocketChat({
 
         setMessages((prev) => [...prev, newMessage]);
 
+        // AI reply removed per request
+
         return messageId;
       } catch (error) {
         console.error("Error sending message:", error);
@@ -445,6 +518,15 @@ export function useSocketChat({
     }
   }, [chatId, currentUserId, messages, markMessageAsRead]);
 
+  // Clear message statuses when receiver replies
+  const clearMessageStatusesOnReply = useCallback(() => {
+    setMessages((prev) =>
+      prev.map((msg) =>
+        msg.senderId === currentUserId ? { ...msg, status: undefined } : msg
+      )
+    );
+  }, [currentUserId]);
+
   // Update user presence
   const updatePresence = useCallback(
     async (isOnline: boolean) => {
@@ -492,6 +574,78 @@ export function useSocketChat({
     };
   }, [chatId, currentUserId]);
 
+  // Auto-hide stale typing indicators (receiver side) after 5 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setTypingUsers((prev) => {
+        const now = Date.now();
+        return prev.filter((u) => {
+          const t = new Date((u as any).updatedAt || (u as any).updated_at || new Date().toISOString()).getTime();
+          return now - t < 5000;
+        });
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Force refresh messages from Firestore
+  const refreshMessages = useCallback(async () => {
+    if (!chatId) return;
+    setLoading(true);
+    try {
+      const messagesRef = collection(db, COLLECTIONS.MESSAGES);
+      const q = query(
+        messagesRef,
+        where("chatId", "==", chatId),
+        orderBy("timestamp", "asc"),
+        limit(200)
+      );
+      const snapshot = await getDocs(q);
+      const firebaseMessages: Message[] = snapshot.docs.map((d: any) => {
+        const data: any = d.data();
+        return {
+          id: d.id,
+          chatId: data.chatId,
+          content: data.content,
+          senderId: data.senderId,
+          receiverId: data.receiverId,
+          timestamp:
+            data.timestamp?.toDate?.()?.toISOString() ||
+            (typeof data.timestamp === "string"
+              ? data.timestamp
+              : new Date().toISOString()),
+          status: data.status || "sent",
+          type: data.type || "text",
+          replyTo: data.replyTo || undefined,
+          reactions: data.reactions || {},
+          editedAt: data.editedAt?.toDate?.()?.toISOString?.() || (typeof data.editedAt === 'string' ? data.editedAt : undefined),
+          deletedFor: data.deletedFor || [],
+          deletedForEveryone: !!data.deletedForEveryone,
+        } as Message;
+      });
+
+      // Filter out messages deleted for everyone or for current user
+      const visible = firebaseMessages.filter((m) => {
+        if (m.deletedForEveryone) return false;
+        if (Array.isArray(m.deletedFor) && m.deletedFor.includes(currentUserId)) return false;
+        return true;
+      });
+
+      console.log('Manual refresh - Message filtering:', {
+        total: firebaseMessages.length,
+        visible: visible.length,
+        currentUserId,
+        deletedForExamples: firebaseMessages.slice(0, 3).map(m => ({ id: m.id, deletedFor: m.deletedFor }))
+      });
+
+      setMessages(visible);
+    } catch (error) {
+      console.error("Error refreshing messages:", error);
+    } finally {
+      setLoading(false);
+    }
+  }, [chatId, currentUserId]);
+
   return {
     messages,
     typingUsers,
@@ -503,6 +657,8 @@ export function useSocketChat({
     sendTypingIndicator,
     markMessageAsRead,
     markChatAsRead,
+    clearMessageStatusesOnReply,
     updatePresence,
+    refreshMessages,
   };
 }

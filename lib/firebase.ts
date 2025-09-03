@@ -11,10 +11,13 @@ import {
   onSnapshot,
   serverTimestamp,
   getDoc,
+  getDocs,
   where,
   setDoc,
+  arrayUnion,
 } from "firebase/firestore";
 import { getAuth, onAuthStateChanged, signOut } from "firebase/auth";
+import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 import { socketService } from "./socket";
 
 // Your Firebase config - replace with your actual values
@@ -32,6 +35,7 @@ const firebaseConfig = {
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 export const db = getFirestore(app);
 export const auth = getAuth(app);
+export const storage = getStorage(app);
 
 // Firestore collections
 export const COLLECTIONS = {
@@ -60,7 +64,8 @@ export interface Message {
   content: string;
   timestamp: any;
   status: "sent" | "delivered" | "seen";
-  type: "text" | "image" | "file";
+  type: "text" | "image" | "video" | "file";
+  mediaUrl?: string;
 }
 
 // Chat interface
@@ -112,6 +117,136 @@ export class FirebaseService {
       console.error("Error saving message:", error);
       throw error;
     }
+  }
+
+  // Fetch AI reply suggestions via local AIService (frontend helper) for now.
+  // In production, this should be a backend endpoint.
+  // Removed per request
+
+  // Upload media to Firebase Storage and return public URL
+  static async uploadMediaAsync(params: {
+    uri: string;
+    path: string; // e.g., `chats/${chatId}/images/${filename}`
+    contentType?: string;
+  }): Promise<string> {
+    const response = await fetch(params.uri);
+    const blob = await response.blob();
+    const ref = storageRef(storage, params.path);
+    await uploadBytes(ref, blob, params.contentType ? { contentType: params.contentType } : undefined);
+    const url = await getDownloadURL(ref);
+    return url;
+  }
+
+  // Send a media message (image/video)
+  static async sendMediaMessage(params: {
+    chatId: string;
+    senderId: string;
+    receiverId: string;
+    type: "image" | "video";
+    mediaUrl: string;
+    caption?: string;
+  }): Promise<string> {
+    const docRef = await addDoc(collection(db, COLLECTIONS.MESSAGES), {
+      chatId: params.chatId,
+      senderId: params.senderId,
+      receiverId: params.receiverId,
+      content: (params.caption || "").trim(),
+      type: params.type,
+      mediaUrl: params.mediaUrl,
+      timestamp: serverTimestamp(),
+      status: "sent",
+    });
+
+    // Emit via Socket.IO for real-time
+    if (socketService.getConnectionStatus()) {
+      socketService.sendMessage(
+        params.chatId,
+        (params.caption || "").trim() || (params.type === "image" ? "Photo" : "Video"),
+        params.receiverId,
+        docRef.id
+      );
+    }
+
+    return docRef.id;
+  }
+
+  // ----- Message actions -----
+  static async deleteForMe(messageId: string, userProfileId: string): Promise<void> {
+    const ref = doc(db, COLLECTIONS.MESSAGES, messageId);
+    await updateDoc(ref, { deletedFor: arrayUnion(userProfileId) } as any);
+  }
+
+  static async deleteForEveryone(messageId: string): Promise<void> {
+    const ref = doc(db, COLLECTIONS.MESSAGES, messageId);
+    await updateDoc(ref, { deletedForEveryone: true, content: "", type: "text" } as any);
+  }
+
+  static async editMessage(messageId: string, newContent: string): Promise<void> {
+    const ref = doc(db, COLLECTIONS.MESSAGES, messageId);
+    await updateDoc(ref, { content: newContent, editedAt: serverTimestamp() } as any);
+  }
+
+  static async setReply(messageId: string, replyToId: string): Promise<void> {
+    const ref = doc(db, COLLECTIONS.MESSAGES, messageId);
+    await updateDoc(ref, { replyTo: replyToId } as any);
+  }
+
+  static async setReaction(messageId: string, userId: string, emoji: string): Promise<void> {
+    const ref = doc(db, COLLECTIONS.MESSAGES, messageId);
+    // Firestore cannot partially update dynamic map keys without merge object; use field path
+    const field = `reactions.${userId}` as any;
+    await updateDoc(ref, { [field]: emoji } as any);
+  }
+
+  // ----- Moderation & Visibility -----
+  static async blockUser(blockerProfileId: string, blockedProfileId: string): Promise<void> {
+    const ref = doc(db, COLLECTIONS.USER_PROFILES, blockerProfileId, 'blocked', blockedProfileId);
+    await setDoc(ref, { blockedAt: serverTimestamp(), blockedProfileId }, { merge: true } as any);
+  }
+
+  static async unblockUser(blockerProfileId: string, blockedProfileId: string): Promise<void> {
+    const ref = doc(db, COLLECTIONS.USER_PROFILES, blockerProfileId, 'blocked', blockedProfileId);
+    // Soft-unblock by clearing marker
+    await setDoc(ref, { unblockedAt: serverTimestamp(), blocked: false }, { merge: true } as any);
+  }
+
+  static async bulkClearChatForUser(chatId: string, userProfileId: string): Promise<void> {
+    // Soft delete per message by adding user to deletedFor
+    const qs = await getDocs(query(collection(db, COLLECTIONS.MESSAGES), where('chatId', '==', chatId)));
+    for (const d of qs.docs) {
+      try {
+        await updateDoc(doc(db, COLLECTIONS.MESSAGES, d.id), { deletedFor: arrayUnion(userProfileId) } as any);
+      } catch {}
+    }
+  }
+
+  static async createReport(params: {
+    reporterId: string;
+    reportedId: string;
+    chatId: string;
+    category: string;
+    reason?: string;
+    scope: 'all' | 'range';
+    from?: string;
+    to?: string;
+  }): Promise<void> {
+    await addDoc(collection(db, 'reports'), {
+      reporterId: params.reporterId,
+      reportedId: params.reportedId,
+      chatId: params.chatId,
+      category: params.category || 'unspecified',
+      reason: params.reason || '',
+      scope: params.scope,
+      from: params.from || null,
+      to: params.to || null,
+      status: 'open',
+      createdAt: serverTimestamp(),
+    } as any);
+  }
+
+  static async updateReportStatus(reportId: string, status: 'open' | 'in_review' | 'resolved' | 'dismissed'): Promise<void> {
+    const ref = doc(db, 'reports', reportId);
+    await updateDoc(ref, { status, updatedAt: serverTimestamp() } as any);
   }
 
   // Update message status and emit via Socket.IO

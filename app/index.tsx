@@ -9,15 +9,15 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { auth, db } from "@/lib/firebase";
-import { onAuthStateChanged } from "firebase/auth";
-import { collection, getDocs, query, where } from "firebase/firestore";
+import { auth } from "@/lib/firebase";
+import { useOfflineAuth } from "@/hooks/useOfflineAuth";
 
 export default function SplashScreen() {
   const router = useRouter();
   const [fadeAnim] = useState(new Animated.Value(0));
   const [scaleAnim] = useState(new Animated.Value(0.8));
   const [statusText, setStatusText] = useState("Initializing...");
+  const { currentUser, isLoading, error, initializeUserProfile, isOnline } = useOfflineAuth();
 
   useEffect(() => {
     // Start animations
@@ -60,36 +60,54 @@ export default function SplashScreen() {
 
       setStatusText("Verifying session...");
 
-      const currentUser = auth.currentUser;
+      const firebaseUser = auth.currentUser;
 
-      if (currentUser) {
+      if (firebaseUser) {
         setStatusText("Loading your profile...");
-
-        const q = query(
-          collection(db, "user_profiles"),
-          where("auth_user_id", "==", currentUser.uid)
-        );
-        const snap = await getDocs(q);
-        const profile = snap.docs[0]?.data() as any | undefined;
-
-        if (!profile) {
-          // No profile exists, redirect to create profile
-          setStatusText("Setting up your profile...");
-          setTimeout(() => {
-            router.replace("/create-profile");
-          }, 1000);
-        } else if (!profile.is_profile_complete) {
-          // Profile exists but incomplete, redirect to create profile
-          setStatusText("Completing your profile...");
-          setTimeout(() => {
-            router.replace("/create-profile");
-          }, 1000);
-        } else {
-          // Profile complete, go to main app
-          setStatusText("Welcome back!");
-          setTimeout(() => {
-            router.replace("/(tabs)");
-          }, 800);
+        
+        // Initialize user profile (will try cache first, then online)
+        await initializeUserProfile();
+        
+        if (currentUser) {
+          if (!currentUser.is_profile_complete) {
+            // Profile exists but incomplete, redirect to create profile
+            setStatusText("Completing your profile...");
+            setTimeout(() => {
+              router.replace("/create-profile");
+            }, 1000);
+          } else {
+            // Profile complete, go to main app
+            setStatusText("Welcome back!");
+            setTimeout(() => {
+              router.replace("/(tabs)");
+            }, 800);
+          }
+        } else if (error) {
+          // Handle error cases
+          if (error === "No cached profile available offline") {
+            setStatusText("Offline mode - using cached data");
+            // Try to load from cache one more time
+            const cachedProfile = await AsyncStorage.getItem('cached_user_profile');
+            if (cachedProfile) {
+              const profile = JSON.parse(cachedProfile);
+              if (profile && profile.is_profile_complete) {
+                setStatusText("Welcome back (offline mode)!");
+                setTimeout(() => {
+                  router.replace("/(tabs)");
+                }, 800);
+                return;
+              }
+            }
+            setStatusText("Profile not available offline");
+            setTimeout(() => {
+              router.replace("/(auth)/login");
+            }, 1000);
+          } else {
+            setStatusText("Profile not found");
+            setTimeout(() => {
+              router.replace("/create-profile");
+            }, 1000);
+          }
         }
       } else {
         setStatusText("Redirecting to login...");
