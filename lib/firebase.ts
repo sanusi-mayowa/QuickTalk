@@ -64,8 +64,10 @@ export interface Message {
   content: string;
   timestamp: any;
   status: "sent" | "delivered" | "seen";
-  type: "text" | "image" | "video" | "file";
+  type: "text" | "image" | "video" | "file" | "system";
   mediaUrl?: string;
+  expiresAt?: any;
+  createdAt?: any;
 }
 
 // Chat interface
@@ -99,6 +101,7 @@ export class FirebaseService {
       const docRef = await addDoc(collection(db, COLLECTIONS.MESSAGES), {
         ...message,
         timestamp: serverTimestamp(),
+        createdAt: serverTimestamp(),
         status: "sent",
       });
 
@@ -145,6 +148,7 @@ export class FirebaseService {
     type: "image" | "video";
     mediaUrl: string;
     caption?: string;
+    expiresAt?: Date | null;
   }): Promise<string> {
     const docRef = await addDoc(collection(db, COLLECTIONS.MESSAGES), {
       chatId: params.chatId,
@@ -154,7 +158,9 @@ export class FirebaseService {
       type: params.type,
       mediaUrl: params.mediaUrl,
       timestamp: serverTimestamp(),
+      createdAt: serverTimestamp(),
       status: "sent",
+      ...(params.expiresAt ? { expiresAt: params.expiresAt } : {}),
     });
 
     // Emit via Socket.IO for real-time
@@ -168,6 +174,101 @@ export class FirebaseService {
     }
 
     return docRef.id;
+  }
+
+  // ----- Disappearing messages & system helpers -----
+  static async setChatDisappearingSettings(params: {
+    chatId: string;
+    enabled: boolean;
+    durationSec: number;
+    updatedBy: string;
+  }): Promise<void> {
+    const ref = doc(db, COLLECTIONS.CHATS, params.chatId);
+    await updateDoc(ref, {
+      disappearingMessages: {
+        enabled: params.enabled,
+        duration: params.durationSec,
+        lastUpdated: serverTimestamp(),
+        updatedBy: params.updatedBy,
+      },
+    } as any);
+  }
+
+  static async sendSystemMessage(params: {
+    chatId: string;
+    content: string;
+  }): Promise<string> {
+    const docRef = await addDoc(collection(db, COLLECTIONS.MESSAGES), {
+      chatId: params.chatId,
+      senderId: "system",
+      receiverId: "system",
+      content: params.content,
+      type: "system",
+      timestamp: serverTimestamp(),
+      status: "sent",
+    } as any);
+    return docRef.id;
+  }
+
+  // ----- User-level defaults -----
+  static async setUserDisappearingDefaults(params: {
+    userProfileId: string;
+    enabled: boolean;
+    durationSec: number;
+  }): Promise<void> {
+    const ref = doc(db, COLLECTIONS.USER_PROFILES, params.userProfileId);
+    await updateDoc(ref, {
+      disappearingDefaults: {
+        enabled: params.enabled,
+        duration: params.durationSec,
+        lastUpdated: serverTimestamp(),
+      },
+    } as any);
+  }
+
+  static async notifyAllChatsDisappearingChanged(params: {
+    userProfileId: string;
+    content: string;
+  }): Promise<void> {
+    // Inform all chats that include this user by adding a system message
+    const qs = await getDocs(
+      query(collection(db, COLLECTIONS.CHATS), where('participants', 'array-contains', params.userProfileId))
+    );
+    for (const d of qs.docs) {
+      try {
+        await addDoc(collection(db, COLLECTIONS.MESSAGES), {
+          chatId: d.id,
+          senderId: 'system',
+          receiverId: 'system',
+          content: params.content,
+          type: 'system',
+          timestamp: serverTimestamp(),
+          status: 'sent',
+        } as any);
+      } catch {}
+    }
+  }
+
+  static async applyUserDefaultToAllChats(params: {
+    userProfileId: string;
+    enabled: boolean;
+    durationSec: number;
+  }): Promise<void> {
+    const qs = await getDocs(
+      query(collection(db, COLLECTIONS.CHATS), where('participants', 'array-contains', params.userProfileId))
+    );
+    for (const d of qs.docs) {
+      try {
+        await updateDoc(doc(db, COLLECTIONS.CHATS, d.id), {
+          disappearingMessages: {
+            enabled: params.enabled,
+            duration: params.durationSec,
+            lastUpdated: serverTimestamp(),
+            updatedBy: params.userProfileId,
+          },
+        } as any);
+      } catch {}
+    }
   }
 
   // ----- Message actions -----

@@ -14,6 +14,7 @@ import {
 import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import { auth, db } from "@/lib/firebase";
+import FirebaseService from "@/lib/firebase";
 import { useTheme, ThemeMode } from "@/lib/theme";
 import { useOffline } from "@/hooks/useOffline";
 import { useOfflineAuth } from "@/hooks/useOfflineAuth";
@@ -37,6 +38,11 @@ export default function SettingsScreen() {
   const { clearCachedProfile } = useOfflineAuth();
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+  // Disappearing defaults UI state
+  const [dmEnabled, setDmEnabled] = useState<boolean>(false);
+  const [dmDurationSec, setDmDurationSec] = useState<number>(60 * 60 * 24);
+  const [savingDm, setSavingDm] = useState<boolean>(false);
+  const [applyToExistingChats, setApplyToExistingChats] = useState<boolean>(false);
 
   useEffect(() => {
     loadProfile();
@@ -52,8 +58,16 @@ export default function SettingsScreen() {
         where("auth_user_id", "==", user.uid)
       );
       const snap = await getDocs(q);
-      const userProfile = snap.docs[0]?.data() as UserProfile | undefined;
+      const userDoc = snap.docs[0];
+      const userProfile = userDoc?.data() as UserProfile | undefined;
       if (userProfile) setProfile(userProfile);
+      // Load user disappearing defaults
+      if (userDoc?.exists()) {
+        const d: any = userDoc.data();
+        const defaults = d.disappearingDefaults || {};
+        setDmEnabled(!!defaults.enabled);
+        setDmDurationSec(Number(defaults.duration || 60 * 60 * 24));
+      }
     } catch (error: any) {
       console.error("Error loading profile:", error);
       Toast.show({
@@ -93,6 +107,61 @@ export default function SettingsScreen() {
         text1: "Logout Failed",
         text2: "Something went wrong",
       });
+    }
+  };
+
+  const formatDurationLabel = (sec: number) => {
+    if (sec === 60 * 60 * 24 * 90) return "90 days";
+    if (sec === 60 * 60 * 24 * 7) return "7 days";
+    if (sec === 60 * 60 * 24) return "24 hours";
+    return `${Math.round(sec / 60)} min`;
+  };
+
+  const handleSaveDisappearingDefaults = async () => {
+    try {
+      const user = auth.currentUser;
+      if (!user) return;
+      setSavingDm(true);
+      // Find profile id
+      const q = query(
+        collection(db, "user_profiles"),
+        where("auth_user_id", "==", user.uid)
+      );
+      const snap = await getDocs(q);
+      const meDoc = snap.docs[0];
+      if (!meDoc) {
+        Toast.show({ type: "error", text1: "Profile not found" });
+        return;
+      }
+      const myProfileId = meDoc.id;
+
+      await FirebaseService.setUserDisappearingDefaults({
+        userProfileId: myProfileId,
+        enabled: dmEnabled,
+        durationSec: dmEnabled ? dmDurationSec : 0,
+      });
+
+      // Optionally apply to existing chats and notify
+      if (applyToExistingChats) {
+        await FirebaseService.applyUserDefaultToAllChats({
+          userProfileId: myProfileId,
+          enabled: dmEnabled,
+          durationSec: dmEnabled ? dmDurationSec : 0,
+        });
+        const content = dmEnabled
+          ? `You turned on disappearing messages. New messages will disappear after ${formatDurationLabel(dmDurationSec)}.`
+          : `You turned off disappearing messages.`;
+        await FirebaseService.notifyAllChatsDisappearingChanged({
+          userProfileId: myProfileId,
+          content,
+        });
+      }
+
+      Toast.show({ type: "success", text1: "Saved", text2: "Disappearing defaults updated" });
+    } catch (e: any) {
+      Toast.show({ type: "error", text1: "Failed", text2: e?.message || "Please try again" });
+    } finally {
+      setSavingDm(false);
     }
   };
 
@@ -221,49 +290,38 @@ export default function SettingsScreen() {
               { backgroundColor: theme.colors.surface },
             ]}
           >
-            <View
+            <TouchableOpacity
               style={[
                 styles.settingItem,
                 { borderBottomColor: theme.colors.border },
               ]}
+              onPress={() => (router.push as any)({ pathname: '/settings/disappearing' })}
+              accessibilityRole="button"
+            >
+              <View style={styles.settingItemLeft}>
+                <View style={styles.settingIcon}>
+                  <Feather name="clock" size={20} color={theme.colors.primary} />
+                </View>
+                <Text style={[styles.settingText, { color: theme.colors.text }]}>Disappearing messages</Text>
+              </View>
+              <Feather name="chevron-right" size={20} color={theme.colors.mutedText} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.settingItem,
+                { borderBottomColor: theme.colors.border },
+              ]}
+              onPress={() => (router.push as any)({ pathname: '/settings/theme' })}
+              accessibilityRole="button"
             >
               <View style={styles.settingItemLeft}>
                 <View style={styles.settingIcon}>
                   <Feather name="moon" size={20} color={theme.colors.primary} />
                 </View>
-                <Text
-                  style={[styles.settingText, { color: theme.colors.text }]}
-                >
-                  Theme
-                </Text>
+                <Text style={[styles.settingText, { color: theme.colors.text }]}>Theme</Text>
               </View>
-              <View style={{ flexDirection: "row", gap: 8 }}>
-                {(["light", "dark", "system"] as ThemeMode[]).map((opt) => (
-                  <TouchableOpacity
-                    key={opt}
-                    style={[
-                      styles.themeChip,
-                      { borderColor: theme.colors.border },
-                      mode === opt && { backgroundColor: theme.colors.primary },
-                    ]}
-                    onPress={() => setMode(opt)}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected: mode === opt }}
-                  >
-                    <Text
-                      style={[
-                        styles.settingText,
-                        mode === opt
-                          ? { color: theme.colors.primaryText }
-                          : { color: theme.colors.text },
-                      ]}
-                    >
-                      {opt[0].toUpperCase() + opt.slice(1)}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </View>
+              <Feather name="chevron-right" size={20} color={theme.colors.mutedText} />
+            </TouchableOpacity>
             <TouchableOpacity
               style={[
                 styles.settingItem,
@@ -281,6 +339,7 @@ export default function SettingsScreen() {
                   Blocked contacts
                 </Text>
               </View>
+              <Feather name="chevron-right" size={20} color={theme.colors.mutedText} />
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -288,6 +347,7 @@ export default function SettingsScreen() {
                 styles.settingItem,
                 { borderBottomColor: theme.colors.border },
               ]}
+              onPress={() => (router.push as any)({ pathname: '/settings/security' })}
             >
               <View style={styles.settingItemLeft}>
                 <View style={styles.settingIcon}>
@@ -303,6 +363,7 @@ export default function SettingsScreen() {
                   Privacy & Security
                 </Text>
               </View>
+              <Feather name="chevron-right" size={20} color={theme.colors.mutedText} />
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -649,13 +710,9 @@ const styles = StyleSheet.create({
   },
   logoutSection: {
     backgroundColor: "transparent",
-    borderTopWidth: 1,
-    borderTopColor: "#f0f0f0",
     paddingVertical: 16,
     paddingHorizontal: 20,
-    marginHorizontal: 20,
     borderRadius: 12,
-    marginBottom: 30,
   },
   logoutButton: {
     flexDirection: "row",

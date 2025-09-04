@@ -26,13 +26,15 @@ export interface Message {
   receiverId: string;
   timestamp: string;
   status?: "sent" | "delivered" | "seen";
-  type: "text" | "image" | "file";
+  type: "text" | "image" | "file" | "system";
   // New metadata for actions
   replyTo?: string;
   reactions?: Record<string, string>;
   editedAt?: string;
   deletedFor?: string[];
   deletedForEveryone?: boolean;
+  expiresAt?: string;
+  createdAt?: string;
 }
 
 export interface TypingUser {
@@ -338,13 +340,20 @@ export function useSocketChat({
             editedAt: data.editedAt?.toDate?.()?.toISOString?.() || (typeof data.editedAt === 'string' ? data.editedAt : undefined),
             deletedFor: data.deletedFor || [],
             deletedForEveryone: !!data.deletedForEveryone,
+            expiresAt: data.expiresAt?.toDate?.()?.toISOString?.() || (typeof data.expiresAt === 'string' ? data.expiresAt : undefined),
+            createdAt: data.createdAt?.toDate?.()?.toISOString?.() || (typeof data.createdAt === 'string' ? data.createdAt : undefined),
           } as Message;
         });
 
-        // Filter out messages deleted for everyone or for current user
+        // Filter out messages deleted for everyone, for current user, or expired
+        const nowMs = Date.now();
         const visible = firebaseMessages.filter((m) => {
           if (m.deletedForEveryone) return false;
           if (Array.isArray(m.deletedFor) && m.deletedFor.includes(currentUserId)) return false;
+          if (m.expiresAt) {
+            const exp = new Date(m.expiresAt).getTime();
+            if (!Number.isNaN(exp) && nowMs >= exp) return false;
+          }
           return true;
         });
 
@@ -358,6 +367,21 @@ export function useSocketChat({
 
         setMessages(visible);
         setLoading(false);
+
+        // Opportunistic cleanup: mark expired messages deleted for everyone
+        try {
+          const nowMs = Date.now();
+          const expired = firebaseMessages.filter((m) => {
+            if (!m.expiresAt) return false;
+            const exp = new Date(m.expiresAt).getTime();
+            return !Number.isNaN(exp) && nowMs >= exp && !m.deletedForEveryone;
+          });
+          for (const m of expired) {
+            try {
+              await FirebaseService.deleteForEveryone(m.id);
+            } catch {}
+          }
+        } catch {}
 
         // Auto-mark as delivered for any messages addressed to me that are still 'sent'
         const toDeliver = firebaseMessages.filter(
@@ -389,7 +413,7 @@ export function useSocketChat({
 
   // Send message via Socket.IO and Firebase
   const sendMessage = useCallback(
-    async (content: string): Promise<string> => {
+    async (content: string, opts?: { expiresAt?: Date | null }): Promise<string> => {
       if (!chatId || !currentUserId || !otherParticipantId) {
         throw new Error("Missing required parameters");
       }
@@ -404,7 +428,8 @@ export function useSocketChat({
           type: "text" as const,
           timestamp: serverTimestamp(),
           status: "sent" as const,
-        };
+          ...(opts?.expiresAt ? { expiresAt: opts.expiresAt } : {}),
+        } as any;
 
         // Save to Firebase first
         const docRef = await addDoc(
@@ -433,6 +458,7 @@ export function useSocketChat({
           timestamp: new Date().toISOString(),
           status: "sent",
           type: "text",
+          ...(opts?.expiresAt ? { expiresAt: opts.expiresAt.toISOString() } : {}),
         };
 
         setMessages((prev) => [...prev, newMessage]);
@@ -621,13 +647,20 @@ export function useSocketChat({
           editedAt: data.editedAt?.toDate?.()?.toISOString?.() || (typeof data.editedAt === 'string' ? data.editedAt : undefined),
           deletedFor: data.deletedFor || [],
           deletedForEveryone: !!data.deletedForEveryone,
+          expiresAt: data.expiresAt?.toDate?.()?.toISOString?.() || (typeof data.expiresAt === 'string' ? data.expiresAt : undefined),
+          createdAt: data.createdAt?.toDate?.()?.toISOString?.() || (typeof data.createdAt === 'string' ? data.createdAt : undefined),
         } as Message;
       });
 
-      // Filter out messages deleted for everyone or for current user
+      // Filter out messages deleted for everyone, for current user, or expired
+      const nowMs = Date.now();
       const visible = firebaseMessages.filter((m) => {
         if (m.deletedForEveryone) return false;
         if (Array.isArray(m.deletedFor) && m.deletedFor.includes(currentUserId)) return false;
+        if (m.expiresAt) {
+          const exp = new Date(m.expiresAt).getTime();
+          if (!Number.isNaN(exp) && nowMs >= exp) return false;
+        }
         return true;
       });
 

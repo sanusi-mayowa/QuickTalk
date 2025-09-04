@@ -78,6 +78,13 @@ export default function ChatScreen() {
   // Blocking state
   const [isBlockedByMe, setIsBlockedByMe] = useState<boolean>(false);
   const [isBlockedByOther, setIsBlockedByOther] = useState<boolean>(false);
+  // Disappearing messages state
+  const [disappearingEnabled, setDisappearingEnabled] = useState<boolean>(false);
+  const [disappearingDurationSec, setDisappearingDurationSec] = useState<number>(0);
+  const [showDisappearModal, setShowDisappearModal] = useState(false);
+  // User default disappearing messages
+  const [userDefaultEnabled, setUserDefaultEnabled] = useState<boolean>(false);
+  const [userDefaultDurationSec, setUserDefaultDurationSec] = useState<number>(0);
 
   const getChatCacheKey = useCallback(() => `chat:${chatId}:data`, [chatId]);
   const getMessagesCacheKey = useCallback(
@@ -270,6 +277,22 @@ export default function ChatScreen() {
         setCurrentUserProfileId(myProfileId);
         setOtherParticipantId(otherId);
 
+        // Load disappearing settings (nested object)
+        const dm = chatData.disappearingMessages || {};
+        setDisappearingEnabled(!!dm.enabled);
+        setDisappearingDurationSec(Number(dm.duration || 0));
+
+        // Load user-level default
+        try {
+          const meRef = doc(db, 'user_profiles', myProfileId);
+          const meSnap = await getDoc(meRef);
+          if (meSnap.exists()) {
+            const ud = (meSnap.data() as any).disappearingDefaults || {};
+            setUserDefaultEnabled(!!ud.enabled);
+            setUserDefaultDurationSec(Number(ud.duration || 0));
+          }
+        } catch {}
+
         let participantData = null;
         if (
           chatData &&
@@ -324,6 +347,34 @@ export default function ChatScreen() {
     });
     return () => unsubscribe();
   }, [otherParticipantId]);
+
+  // Subscribe to chat doc for disappearing updates
+  useEffect(() => {
+    if (!chatId) return;
+    const ref = doc(db, 'chats', chatId);
+    const unsub = onSnapshot(ref, (snap) => {
+      if (!snap.exists()) return;
+      const d: any = snap.data();
+      const dm = (d as any).disappearingMessages || {};
+      setDisappearingEnabled(!!dm.enabled);
+      setDisappearingDurationSec(Number(dm.duration || 0));
+    });
+    return () => unsub();
+  }, [chatId]);
+
+  // Subscribe to my user default
+  useEffect(() => {
+    if (!currentUserProfileId) return;
+    const ref = doc(db, 'user_profiles', currentUserProfileId);
+    const unsub = onSnapshot(ref, (snap) => {
+      if (!snap.exists()) return;
+      const d: any = snap.data();
+      const ud = (d as any).disappearingDefaults || {};
+      setUserDefaultEnabled(!!ud.enabled);
+      setUserDefaultDurationSec(Number(ud.duration || 0));
+    });
+    return () => unsub();
+  }, [currentUserProfileId]);
 
   // Watch block status (both directions)
   useEffect(() => {
@@ -516,7 +567,12 @@ export default function ChatScreen() {
       } else {
         // Send immediately if online
         // The sendMessage function will handle the message status automatically
-        const sentId = await sendMessage(text);
+        const effectiveEnabled = disappearingEnabled || userDefaultEnabled;
+        const effectiveDuration = disappearingEnabled ? disappearingDurationSec : userDefaultDurationSec;
+        const expiresAt = effectiveEnabled && effectiveDuration > 0 
+          ? new Date(Date.now() + disappearingDurationSec * 1000) 
+          : null;
+        const sentId = await sendMessage(text, { expiresAt });
         if (replyToMessageId) {
           try {
             await FirebaseService.setReply(sentId, replyToMessageId);
@@ -582,6 +638,8 @@ export default function ChatScreen() {
       const filename = `${Date.now()}-${Math.round(Math.random() * 1e6)}${isVideo ? '.mp4' : '.jpg'}`;
       const path = `chats/${chatId}/${isVideo ? 'videos' : 'images'}/${filename}`;
       const url = await FirebaseService.uploadMediaAsync({ uri: toUploadUri, path, contentType });
+      const effectiveEnabled = disappearingEnabled || userDefaultEnabled;
+      const effectiveDuration = disappearingEnabled ? disappearingDurationSec : userDefaultDurationSec;
       await FirebaseService.sendMediaMessage({
         chatId: chatId,
         senderId: currentUserProfileId,
@@ -589,6 +647,9 @@ export default function ChatScreen() {
         type: isVideo ? 'video' : 'image',
         mediaUrl: url,
         caption: input.trim() || undefined,
+        expiresAt: effectiveEnabled && effectiveDuration > 0 
+          ? new Date(Date.now() + effectiveDuration * 1000) 
+          : undefined,
       });
       setInput("");
       Toast.show({ type: 'success', text1: isVideo ? 'Video sent' : 'Photo sent' });
@@ -654,7 +715,6 @@ export default function ChatScreen() {
       "Reply",
       "React",
       ...(isMine ? ["Edit"] : []),
-      "Delete for me",
       ...(isMine && withinWindow ? ["Delete for everyone"] : []),
       "Cancel",
     ];
@@ -704,22 +764,7 @@ export default function ChatScreen() {
           setInput(msg.content || "");
           break;
         }
-        case "Delete for me": {
-          // Optimistic hide locally
-          setHiddenMessageIds((prev) => new Set([...Array.from(prev), msg.id]));
-          try {
-            await FirebaseService.deleteForMe(msg.id, currentUserProfileId);
-          } catch (e) {
-            // Rollback
-            setHiddenMessageIds((prev) => {
-              const next = new Set(Array.from(prev));
-              next.delete(msg.id);
-              return next;
-            });
-            Toast.show({ type: "error", text1: "Delete failed" });
-          }
-          break;
-        }
+        
         case "Delete for everyone": {
           const isMine = msg.senderId === currentUserProfileId;
           if (!isMine || !isWithinEditDeleteWindow(msg)) {
@@ -860,7 +905,9 @@ export default function ChatScreen() {
                 isMine ? styles.mineText : styles.theirText,
               ]}
             >
-              {mergedItem.type === 'image' && mergedItem.mediaUrl ? (
+              {mergedItem.type === 'system' ? (
+                <Text style={[styles.bubbleText, { fontStyle: 'italic', color: '#666' }]}>{mergedItem.content}</Text>
+              ) : mergedItem.type === 'image' && mergedItem.mediaUrl ? (
                 <Image source={{ uri: mergedItem.mediaUrl }} style={{ width: 220, height: 220, borderRadius: 12 }} />
               ) : mergedItem.type === 'video' && mergedItem.mediaUrl ? (
                 <View style={{ width: 220, height: 220, borderRadius: 12, overflow: 'hidden', backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' }}>
@@ -1116,11 +1163,29 @@ export default function ChatScreen() {
                 color={theme.colors.primaryText}
               />
             </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.headerButton}
+              accessibilityRole="button"
+              accessibilityLabel="Disappearing messages"
+              onPress={() => setShowDisappearModal(true)}
+            >
+              <Feather
+                name={disappearingEnabled ? "clock" : "clock"}
+                size={20}
+                color={theme.colors.primaryText}
+              />
+            </TouchableOpacity>
           </View>
         </View>
 
         {renderConnectionStatus()}
         {renderBlockBanner()}
+        {disappearingEnabled && (
+          <View style={[styles.connectionBanner, { backgroundColor: '#607D8B', top: 112 }]}> 
+            <Feather name="clock" size={16} color="#fff" />
+            <Text style={styles.connectionText}>You turned on disappearing messages. New messages will disappear after {disappearingDurationSec === 60*60*24*90 ? '90 days' : disappearingDurationSec === 60*60*24*7 ? '7 days' : disappearingDurationSec === 60*60*24 ? '24 hours' : `${Math.round(disappearingDurationSec/60)} min`}.</Text>
+          </View>
+        )}
 
         {isColdEmpty && (
           <View style={styles.center}>
@@ -1257,7 +1322,6 @@ export default function ChatScreen() {
                     "Reply",
                     "React",
                     ...(isMine ? ["Edit"] : []),
-                    "Delete for me",
                     ...(isMine && within ? ["Delete for everyone"] : []),
                     "Cancel",
                   ];
@@ -1285,6 +1349,64 @@ export default function ChatScreen() {
           </View>
         </Modal>
       )}
+
+      {/* Disappearing messages modal */}
+      <Modal
+        visible={showDisappearModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowDisappearModal(false)}
+      >
+        <Pressable style={styles.sheetBackdrop} onPress={() => setShowDisappearModal(false)} />
+        <View style={[styles.sheetContainer, { backgroundColor: theme.colors.surface }]}> 
+          <Text style={[styles.sheetItemText, { fontWeight: '600', padding: 16 }]}>Disappearing messages</Text>
+          <TouchableOpacity style={styles.sheetItem} onPress={async () => {
+            try {
+              await FirebaseService.setChatDisappearingSettings({ chatId, enabled: false, durationSec: 0, updatedBy: currentUserProfileId });
+              await FirebaseService.sendSystemMessage({ chatId, content: 'You turned off disappearing messages.' });
+            } catch {}
+            setShowDisappearModal(false);
+          }}>
+            <Text style={styles.sheetItemText}>Off</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.sheetItem} onPress={async () => {
+            try {
+              await FirebaseService.setChatDisappearingSettings({ chatId, enabled: true, durationSec: 60*60*24, updatedBy: currentUserProfileId });
+              await FirebaseService.sendSystemMessage({ chatId, content: 'You turned on disappearing messages. New messages will disappear after 24 hours.' });
+            } catch {}
+            setShowDisappearModal(false);
+          }}>
+            <Text style={styles.sheetItemText}>24 hours</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.sheetItem} onPress={async () => {
+            try {
+              await FirebaseService.setChatDisappearingSettings({ chatId, enabled: true, durationSec: 60*60*24*7, updatedBy: currentUserProfileId });
+              await FirebaseService.sendSystemMessage({ chatId, content: 'You turned on disappearing messages. New messages will disappear after 7 days.' });
+            } catch {}
+            setShowDisappearModal(false);
+          }}>
+            <Text style={styles.sheetItemText}>7 days</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.sheetItem} onPress={async () => {
+            try {
+              await FirebaseService.setChatDisappearingSettings({ chatId, enabled: true, durationSec: 60*60*24*90, updatedBy: currentUserProfileId });
+              await FirebaseService.sendSystemMessage({ chatId, content: 'You turned on disappearing messages. New messages will disappear after 90 days.' });
+            } catch {}
+            setShowDisappearModal(false);
+          }}>
+            <Text style={styles.sheetItemText}>90 days</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.sheetItem} onPress={async () => {
+            try {
+              await FirebaseService.setChatDisappearingSettings({ chatId, enabled: true, durationSec: 60*60*24, updatedBy: currentUserProfileId });
+              await FirebaseService.sendSystemMessage({ chatId, content: 'You turned on disappearing messages. New messages will disappear after 24 hours.' });
+            } catch {}
+            setShowDisappearModal(false);
+          }}>
+            <Text style={styles.sheetItemText}>24 hours</Text>
+          </TouchableOpacity>
+        </View>
+      </Modal>
 
 
 
